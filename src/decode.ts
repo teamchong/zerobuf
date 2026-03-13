@@ -157,7 +157,7 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
         return () => {
           const dp = deref(arena, handlePtr);
           const len = arena.readU32(dp + 4);
-          cache.delete(len - 1);
+          if (len > 0) cache.delete(len - 1);
           return arrayPop(arena, handlePtr);
         };
       }
@@ -219,7 +219,8 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
           return index < arena.readU32(deref(arena, handlePtr) + 4);
         }
       }
-      return prop === "length" || prop === "push" || prop === "pop" || prop === "toJS";
+      return prop === "length" || prop === "push" || prop === "pop" || prop === "toJS"
+        || prop === Symbol.iterator || prop === "__zerobuf_ptr" || prop === "__zerobuf_arena";
     },
 
     ownKeys() {
@@ -235,6 +236,10 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
         return { configurable: true, enumerable: true, writable: true };
       }
       return undefined;
+    },
+
+    deleteProperty() {
+      return false;
     },
   };
 
@@ -363,47 +368,7 @@ function arrayPop(arena: Arena, handlePtr: number): unknown {
   return val;
 }
 
-// ---------- Internal: object property lookup and growth ----------
-
-function findEntry(arena: Arena, dataPtr: number, key: string): number {
-  const count = arena.readU32(dataPtr + 4);
-  const keyBytes = enc.encode(key);
-
-  for (let i = 0; i < count; i++) {
-    const entryOffset = dataPtr + OBJECT_HEADER + i * OBJECT_ENTRY;
-    const keyPtr = arena.readU32(entryOffset);
-    const keyLen = arena.readU32(entryOffset + 4);
-
-    if (keyLen !== keyBytes.byteLength) continue;
-
-    const stored = new Uint8Array(arena.memory.buffer, keyPtr, keyLen);
-    let match = true;
-    for (let j = 0; j < keyLen; j++) {
-      if (stored[j] !== keyBytes[j]) {
-        match = false;
-        break;
-      }
-    }
-    if (match) return entryOffset;
-  }
-
-  return -1;
-}
-
-function objectKeys(arena: Arena, dataPtr: number): string[] {
-  const count = arena.readU32(dataPtr + 4);
-  const keys: string[] = [];
-
-  for (let i = 0; i < count; i++) {
-    const entryOffset = dataPtr + OBJECT_HEADER + i * OBJECT_ENTRY;
-    const keyPtr = arena.readU32(entryOffset);
-    const keyLen = arena.readU32(entryOffset + 4);
-    const bytes = new Uint8Array(arena.memory.buffer, keyPtr, keyLen);
-    keys.push(decoder.decode(bytes));
-  }
-
-  return keys;
-}
+// ---------- Internal: object growth ----------
 
 function objectAdd(arena: Arena, handlePtr: number, key: string, value: unknown): void {
   let dataPtr = deref(arena, handlePtr);

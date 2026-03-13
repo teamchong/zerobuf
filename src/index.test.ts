@@ -387,7 +387,7 @@ describe("zerobuf", () => {
       expect(Array.isArray(snap.tags)).toBe(true);
     });
 
-    it("materializes array via .materialize()", () => {
+    it("converts array to plain JS array via .toJS()", () => {
       const buf = zerobuf(mem());
       const obj = buf.create({ items: [1, 2, 3] });
       const arr = obj.items as any;

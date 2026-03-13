@@ -1,6 +1,6 @@
 # zerobuf
 
-Zero-copy JS ↔ WASM. No serialization. No `copyInto`. No `copyOut`. The JS object **is** the WASM memory.
+A shared memory layout for JS and WASM. Both sides read and write the same bytes — zero copy, zero serialization.
 
 ## The problem
 
@@ -14,31 +14,138 @@ wasm-bindgen does this. AssemblyScript does this. Emscripten does this. Two full
 
 It gets worse with complex data. Pass an object with nested arrays? Serialize the whole tree in, deserialize the whole tree out. Even if WASM only touched one field.
 
-## How zerobuf works
+## What zerobuf is
 
-zerobuf gives you a JS Proxy that **is** the WASM memory. No copy in, no copy out, ever.
+zerobuf is three things:
+
+1. **A memory layout spec** — how numbers, strings, arrays, and objects are laid out in WASM linear memory. Both sides agree on the format.
+2. **A JS library** — Proxy objects that read/write WASM memory directly. `obj.x` reads from `wasm.memory`, not from a JS copy.
+3. **Language libraries** (planned) — Zig, Rust, C, Go, Python implementations that read/write the same layout. The WASM module imports zerobuf for its language and both sides share one source of truth.
+
+Without the WASM-side library, zerobuf is just JS talking to itself. The value is that **both sides understand the same binary format**.
+
+## How it works: end to end
+
+### Step 1: Load a WASM module
+
+Every WASM module has a `WebAssembly.Memory` — a resizable `ArrayBuffer` that both JS and WASM can access. This is where zerobuf lives.
+
+```typescript
+// Load your WASM module (Zig, Rust, C — any language)
+const wasm = await WebAssembly.instantiate(wasmBytes, {
+  env: { memory },  // shared memory
+});
+
+// Both JS and WASM see the same memory
+const memory = wasm.instance.exports.memory as WebAssembly.Memory;
+```
+
+### Step 2: JS writes data into WASM memory
 
 ```typescript
 import { zerobuf } from "zerobuf";
 
-const buf = zerobuf(wasmMemory);
+// Create a zerobuf instance over the shared memory
+// startOffset = where WASM's static data ends (ask your WASM module)
+const buf = zerobuf(memory, wasm.instance.exports.__heap_base.value);
 
 // Create an object — allocated directly in WASM linear memory
 const point = buf.create({ x: 1.0, y: 2.0, label: "origin" });
 
-// Read — lazy, reads from WASM memory at access time
-console.log(point.x);       // 1.0 — read from wasm.memory, not a JS copy
-console.log(point.label);   // "origin" — decoded from WASM memory on access
-
-// Write — immediate, writes to WASM memory
-point.x = 3.14;             // WASM sees this instantly, no copy
-
-// WASM function operates on the same memory
-wasmTransform(point.ptr);   // WASM reads x=3.14 directly, writes result in-place
-console.log(point.x);       // result — JS reads WASM's output, no copy back
+// point.x doesn't live in JS heap — it lives in wasm.memory
+point.x = 3.14;  // writes to wasm.memory at a known byte offset
 ```
 
-Nothing is ever copied. The Proxy reads from WASM memory when you access a property. Writes to WASM memory when you set one. WASM reads and writes the same bytes. Both sides share one source of truth.
+### Step 3: WASM reads the same memory
+
+The WASM module reads `point`'s data directly — no copy, no deserialization. It knows the layout because it uses the zerobuf library for its language.
+
+```typescript
+// Pass the pointer to your WASM function
+const transform = wasm.instance.exports.transform as (ptr: number) => void;
+transform((point as any).__zerobuf_ptr);
+
+// WASM wrote the result in-place — JS reads it back, still zero copy
+console.log(point.x);  // reads WASM's output directly from memory
+```
+
+### Step 4: WASM writes, JS reads
+
+WASM functions can allocate and write zerobuf objects too. JS wraps the pointer as a Proxy:
+
+```typescript
+// WASM function returns a pointer to a zerobuf object it created
+const resultPtr = wasm.instance.exports.computeResult() as number;
+
+// Wrap it — lazy, nothing is read until you access a field
+const result = buf.wrapObject(resultPtr);
+console.log(result.score);   // reads from WASM memory on access
+console.log(result.label);   // string decoded from WASM memory on access
+```
+
+## Two modes
+
+### Dynamic mode (current) — no schema, full flexibility
+
+```typescript
+const buf = zerobuf(memory);
+const obj = buf.create({ x: 1, name: "alice", scores: [95, 87] });
+
+obj.x = 99;                    // overwrite
+obj.email = "alice@test.com";  // add new property
+obj.scores.push(92);           // grow array
+```
+
+Objects and arrays can grow, properties can be added, types can be mixed. Uses Proxy + tagged values + linear key scan. ~100-200ns per access.
+
+### Schema mode (planned) — fixed layout, maximum performance
+
+```typescript
+const Point = buf.schema({
+  x: "f64",   // byte offset 0
+  y: "f64",   // byte offset 8
+  z: "f64",   // byte offset 16
+});
+
+const p = Point.create();
+p.x = 3.14;  // direct write: memory[ptr + 0] = 3.14
+p.x;         // direct read:  memory[ptr + 0] — ~1ns, no Proxy
+```
+
+Schema is defined once in TypeScript at module load time. Offsets are computed once. Accessors are closures over fixed offsets — no Proxy trap, no key lookup. Same speed as FlatBuffers but no build step, no compiler, no codegen.
+
+**The same schema in Zig** (WASM side):
+
+```zig
+const Point = zerobuf.Schema(.{
+    .x = .f64,  // offset 0
+    .y = .f64,  // offset 8
+    .z = .f64,  // offset 16
+});
+
+// Read what JS wrote — same offsets, same memory
+pub fn transform(ptr: u32) void {
+    var p = Point.at(memory, ptr);
+    p.set_x(p.get_x() * 2.0);  // in-place, JS sees the result
+}
+```
+
+Both sides define the same schema → both compute the same offsets → both read/write the same bytes. No serialization, no copy, no format negotiation.
+
+## Multi-language support (planned)
+
+zerobuf is a **binary layout spec** with native implementations per language. Each language gets its own package in its own ecosystem — no cross-language imports.
+
+| Language | Package | Registry | Status |
+|---|---|---|---|
+| TypeScript/JS | `zerobuf` | npm | **Done** |
+| Zig | `zerobuf.zig` | Zig package manager / single file | Planned |
+| Rust | `zerobuf` | crates.io | Planned |
+| C | `zerobuf.h` | Header-only (copy into project) | Planned |
+| Go | `zerobuf-go` | Go module | Planned |
+| Python | `zerobuf` | PyPI | Planned |
+
+Each implementation reads/writes the same binary layout. A Zig WASM module and a TypeScript host share one `WebAssembly.Memory` with zero copies between them. They never import each other — they just agree on the byte format.
 
 ## Dynamic data
 
@@ -64,30 +171,24 @@ user.metadata = { joined: 2024, tier: "pro" };
 
 // String reassignment — reallocs in WASM memory
 user.name = "alice wonderland";
-
-// WASM sees all of it at known offsets
-wasmProcess(user.ptr);
 ```
 
 ## Lazy materialization
 
-Nothing is materialized until you touch it. A 10MB object tree in WASM memory costs zero JS heap until you read a specific field. Read one field, pay for one field.
+Nothing is materialized until you touch it. A 10MB object tree in WASM memory costs zero JS heap until you read a specific field.
 
 ```typescript
-// 10MB of data lives in WASM memory
-const result = buf.wrap(wasmResultPtr);
+// WASM produced a large result
+const result = buf.wrapObject(resultPtr);
 
 // No JS heap cost yet — result is just a Proxy
-// Only when you access a field does it read from WASM memory:
 const name = result.items[0].name;  // reads 3 pointers + 1 string decode
 // The other 9.99MB? Never touched. Never copied. Never materialized.
 ```
 
-This matters for query engines, ML inference, game state — anywhere WASM produces large results and JS only needs part of them.
-
 ## Materialization: when you need speed over laziness
 
-Lazy reads are great when you touch each field once. But if you read `obj.x` in a hot loop 1000 times, that's 1000 Proxy traps → 1000 DataView reads. Call `.materialize()` to snapshot into a plain JS object first:
+If you read `obj.x` in a hot loop 1000 times, that's 1000 Proxy traps. Call `.materialize()` to snapshot into a plain JS object:
 
 ```typescript
 const obj = buf.create({ x: 3.14, y: 2.71, items: [1, 2, 3] });
@@ -97,41 +198,59 @@ const snap = obj.materialize();  // plain JS object, no Proxy
 for (let i = 0; i < 10_000; i++) {
   process(snap.x, snap.y);      // normal JS property access, full speed
 }
-
-// After WASM mutates the data, re-materialize for a fresh snapshot
-wasmTransform(obj.ptr);
-const snap2 = obj.materialize();
 ```
 
-`materialize()` recursively converts the entire structure — nested objects become plain objects, arrays become plain arrays. The result is decoupled from WASM memory: mutating the Proxy won't affect the snapshot, and vice versa.
-
-Works on both objects and arrays:
-
-```typescript
-const arr = obj.items;
-const plainArr = arr.materialize();  // [1, 2, 3] — plain JS array
-```
-
-**When to use which:**
+`materialize()` recursively converts the entire structure. The result is decoupled from WASM memory.
 
 | Pattern | Use |
 |---|---|
-| Read a few fields once | Lazy (default) — no materialization cost |
-| Read many fields in a loop | `.materialize()` first — pay once, read fast |
-| Pass data to non-WASM code | `.materialize()` — returns plain JS, no Proxy |
-| WASM writes, JS reads result | Lazy — read only what you need |
-| Hot inner loop | `.materialize()` — eliminate Proxy overhead |
+| Read a few fields once | Lazy (default) |
+| Hot inner loop | `.materialize()` first |
+| Pass data to non-WASM code | `.materialize()` — returns plain JS |
+
+## Arena memory management
+
+### Save / restore (planned)
+
+Stack-based allocation — allocate together, free together:
+
+```typescript
+const mark = buf.arena.save();    // save current position
+
+const tmp = buf.create({ ... }); // allocate temp data
+process(tmp);
+
+buf.arena.restore(mark);          // free everything after mark — O(1)
+```
+
+| Pattern | How |
+|---|---|
+| Full reset | `arena.restore(0)` |
+| Partial reset | `arena.save()` → work → `arena.restore(mark)` |
+| Per-request | Save at request start, restore at request end |
+
+### Growth strategy
+
+Doubling strategy — O(log n) grows instead of O(n):
+
+```
+Alloc 1KB   → memory stays at 64KB  (fits)
+Alloc 70KB  → memory grows to 128KB (doubled)
+Alloc 200KB → memory grows to 256KB (doubled)
+```
+
+**4GB limit**: WASM linear memory maxes at 65535 pages (4GB minus 64KB — avoids Chrome unsigned overflow bug). zerobuf throws `RangeError` with a clear message.
+
+**Configurable cap**: `zerobuf(memory, 0, { maxPages: 2048 })` limits to 128MB.
 
 ## Why this is safe: no race conditions
 
-JS and WASM on the same thread **never run concurrently**. The call stack is strictly sequential:
+JS and WASM on the same thread **never run concurrently**:
 
 ```
 JS calls WASM → WASM runs to completion → returns to JS
 WASM calls JS → JS runs to completion → returns to WASM
 ```
-
-No preemption, no interleaving. When JS reads or writes via a zerobuf Proxy, WASM is not running. When WASM reads or writes the same memory, JS is not running. One source of truth, one writer at a time, by design.
 
 ```
 JS:    ████░░░░████░░░░████
@@ -139,7 +258,7 @@ WASM:  ░░░░████░░░░████░░░░
        ↑ never overlapping on the same thread
 ```
 
-This is why zero-copy sharing works without locks, atomics, or synchronization. The single-threaded event loop guarantees it.
+No locks, no atomics, no synchronization needed.
 
 | Scenario | Concurrent? | Race condition? |
 |---|---|---|
@@ -147,49 +266,17 @@ This is why zero-copy sharing works without locks, atomics, or synchronization. 
 | WASM in separate Worker + `SharedArrayBuffer` | Yes | Yes — needs Atomics |
 | Cloudflare Workers | No — `SharedArrayBuffer` disabled (Spectre) | Impossible |
 
-zerobuf targets the first and third scenarios. If you need multi-threaded shared WASM memory, you need Atomics — that's a different problem.
-
-## Memory growth
-
-WASM linear memory starts small and grows on demand. Each `memory.grow()` is expensive — it detaches the `ArrayBuffer`, invalidating all TypedArray views. zerobuf handles this correctly:
-
-**Doubling strategy**: When a grow is needed, zerobuf doubles the current memory size (or allocates the exact amount needed, whichever is larger). This means O(log n) grows total instead of O(n) for incremental grows.
-
-```
-Alloc 1KB   → memory stays at 64KB  (fits)
-Alloc 60KB  → memory stays at 64KB  (fits)
-Alloc 70KB  → memory grows to 128KB (doubled from 64KB)
-Alloc 200KB → memory grows to 256KB (doubled from 128KB)
-...
-```
-
-**4GB hard limit**: WASM linear memory maxes out at 65536 pages = 4GB. When you hit it, zerobuf throws a `RangeError` with a clear message — not silent corruption.
-
-**Configurable cap**: Set `maxPages` to limit memory usage below 4GB:
-
-```typescript
-// Limit to 128MB (2048 pages × 64KB)
-const buf = zerobuf(wasmMemory, 0, { maxPages: 2048 });
-
-// Throws RangeError when exceeded
-buf.create({ data: hugePayload }); // "zerobuf: out of memory..."
-```
-
-**View caching**: DataView is cached and only recreated when the buffer detaches (after a grow). No allocation overhead on every read/write.
-
-**What happens at 4GB**: You get a `RangeError`. The arena tracks remaining capacity via `arena.remaining`. Plan accordingly — if you're approaching the limit, `.materialize()` what you need and release the zerobuf instance.
-
 ## Comparison
 
-| | wasm-bindgen | AssemblyScript | Emscripten | zerobuf |
+| | wasm-bindgen | FlatBuffers | Emscripten | zerobuf |
 |---|---|---|---|---|
-| JS → WASM | serialize + copy | serialize + copy | serialize + copy | direct write to memory |
-| WASM → JS | copy + deserialize | copy + deserialize | copy + deserialize | direct read from memory |
-| Partial read | copy entire result, read one field | copy entire result | copy entire result | read one field, touch nothing else |
-| Array push | not possible in WASM memory | copy out, push, copy back | copy out, push, copy back | realloc in WASM memory |
-| Object extend | not possible | not possible | not possible | extend in WASM memory |
-| Nested objects | flatten or serialize | GC objects (not in linear memory) | heap objects (opaque) | pointer-linked in linear memory |
-| Cost of 10MB result, read 1 field | copy 10MB | copy 10MB | copy 10MB | read ~16 bytes |
+| JS → WASM | serialize + copy | schema compile + write | serialize + copy | direct write to memory |
+| WASM → JS | copy + deserialize | zero-copy read | copy + deserialize | zero-copy read |
+| Partial read | copy entire result | read one field (~1ns) | copy entire result | read one field (~100ns dynamic, ~1ns schema) |
+| Dynamic objects | no | no (immutable) | no | yes — push, extend, grow |
+| Build step | codegen (proc macro) | schema compiler (flatc) | codegen (embind) | none |
+| Multi-language | Rust only | 15+ languages | C/C++ only | JS (done), Zig/Rust/C/Go/Python (planned) |
+| Cost of 10MB, read 1 field | copy 10MB | read ~8 bytes | copy 10MB | read ~16 bytes |
 
 ## License
 

@@ -9,8 +9,8 @@
  * old (fragmentation is acceptable for the use case).
  */
 
-/** WASM memory max: 65536 pages × 64KB = 4GB */
-const MAX_PAGES = 65536;
+/** WASM memory max: 65535 pages (4GB minus 64KB — avoids Chrome unsigned overflow bug at exactly 4GB) */
+const MAX_PAGES = 65535;
 const PAGE_SIZE = 65536; // 64KB
 
 export interface ArenaOptions {

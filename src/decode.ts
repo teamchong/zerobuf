@@ -42,7 +42,7 @@ export function readValue(arena: Arena, offset: number): unknown {
 
 /**
  * Eagerly read a tagged value into a plain JS object/array.
- * Recursively materializes all nested structures — no Proxies in the result.
+ * Recursively converts all nested structures — no Proxies in the result.
  * Use this when you need to read the same fields many times (hot loops).
  */
 export function readValueEager(arena: Arena, offset: number): unknown {
@@ -64,16 +64,16 @@ export function readValueEager(arena: Arena, offset: number): unknown {
     case Tag.Bytes:
       return readBytes(arena, arena.readU32(offset + 4));
     case Tag.Array:
-      return materializeArray(arena, arena.readU32(offset + 4));
+      return toJSArray(arena, arena.readU32(offset + 4));
     case Tag.Object:
-      return materializeObject(arena, arena.readU32(offset + 4));
+      return toJSObject(arena, arena.readU32(offset + 4));
     default:
       return null;
   }
 }
 
-/** Materialize an array handle into a plain JS array (recursive). */
-export function materializeArray(arena: Arena, handlePtr: number): unknown[] {
+/** Convert an array handle into a plain JS array (recursive). */
+export function toJSArray(arena: Arena, handlePtr: number): unknown[] {
   const dataPtr = deref(arena, handlePtr);
   const length = arena.readU32(dataPtr + 4);
   const result: unknown[] = [];
@@ -83,8 +83,8 @@ export function materializeArray(arena: Arena, handlePtr: number): unknown[] {
   return result;
 }
 
-/** Materialize an object handle into a plain JS object (recursive). */
-export function materializeObject(arena: Arena, handlePtr: number): Record<string, unknown> {
+/** Convert an object handle into a plain JS object (recursive). */
+export function toJSObject(arena: Arena, handlePtr: number): Record<string, unknown> {
   const dataPtr = deref(arena, handlePtr);
   const count = arena.readU32(dataPtr + 4);
   const result: Record<string, unknown> = {};
@@ -163,7 +163,7 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
       }
 
       if (prop === "toJS") {
-        return () => materializeArray(arena, handlePtr);
+        return () => toJSArray(arena, handlePtr);
       }
 
       if (prop === Symbol.iterator) {
@@ -287,7 +287,7 @@ export function createObjectProxy(arena: Arena, handlePtr: number): Record<strin
   Object.defineProperty(target, "__zerobuf_ptr", { value: handlePtr });
   Object.defineProperty(target, "__zerobuf_arena", { value: arena });
   Object.defineProperty(target, "toJS", {
-    value: () => materializeObject(arena, handlePtr),
+    value: () => toJSObject(arena, handlePtr),
   });
 
   // Define accessors for all current keys (index captured — no linear scan)

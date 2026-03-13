@@ -372,7 +372,7 @@ describe("zerobuf", () => {
       expect(snap.__zerobuf_ptr).toBeUndefined(); // no proxy internals
     });
 
-    it("materializes nested structures recursively", () => {
+    it("converts nested structures recursively", () => {
       const buf = zerobuf(mem());
       const obj = buf.create({
         user: { name: "alice", scores: [95, 87, 92] },
@@ -397,7 +397,7 @@ describe("zerobuf", () => {
       expect(Array.isArray(snap)).toBe(true);
     });
 
-    it("materialized object is decoupled from WASM memory", () => {
+    it("toJS result is decoupled from WASM memory", () => {
       const buf = zerobuf(mem());
       const obj = buf.create({ x: 1 });
       const snap = (obj as any).toJS();

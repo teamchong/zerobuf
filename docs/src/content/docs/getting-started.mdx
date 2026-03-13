@@ -40,12 +40,12 @@ user.scores.push(88);
 user.email = "bob@example.com";
 ```
 
-## Materialization
+## toJS
 
-If you read the same field many times (hot loops), materialize into a plain JS object first:
+If you read the same field many times (hot loops), convert to a plain JS object first:
 
 ```typescript
-const snap = user.materialize();
+const snap = user.toJS();
 
 // snap is a plain JS object — no Proxy overhead
 for (let i = 0; i < 10_000; i++) {

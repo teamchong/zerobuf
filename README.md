@@ -173,9 +173,9 @@ user.metadata = { joined: 2024, tier: "pro" };
 user.name = "alice wonderland";
 ```
 
-## Lazy materialization
+## Lazy access
 
-Nothing is materialized until you touch it. A 10MB object tree in WASM memory costs zero JS heap until you read a specific field.
+Nothing is read until you touch it. A 10MB object tree in WASM memory costs zero JS heap until you read a specific field.
 
 ```typescript
 // WASM produced a large result
@@ -183,30 +183,30 @@ const result = buf.wrapObject(resultPtr);
 
 // No JS heap cost yet — result is just a Proxy
 const name = result.items[0].name;  // reads 3 pointers + 1 string decode
-// The other 9.99MB? Never touched. Never copied. Never materialized.
+// The other 9.99MB? Never touched. Never copied.
 ```
 
-## Materialization: when you need speed over laziness
+## toJS: when you need speed over laziness
 
-If you read `obj.x` in a hot loop 1000 times, that's 1000 Proxy traps. Call `.materialize()` to snapshot into a plain JS object:
+If you read `obj.x` in a hot loop 1000 times, that's 1000 Proxy traps. Call `.toJS()` to convert into a plain JS object:
 
 ```typescript
 const obj = buf.create({ x: 3.14, y: 2.71, items: [1, 2, 3] });
 
-// Hot loop — materialize first, then iterate
-const snap = obj.materialize();  // plain JS object, no Proxy
+// Hot loop — toJS first, then iterate
+const snap = obj.toJS();         // plain JS object, no Proxy
 for (let i = 0; i < 10_000; i++) {
   process(snap.x, snap.y);      // normal JS property access, full speed
 }
 ```
 
-`materialize()` recursively converts the entire structure. The result is decoupled from WASM memory.
+`.toJS()` recursively converts the entire structure. The result is decoupled from WASM memory.
 
 | Pattern | Use |
 |---|---|
 | Read a few fields once | Lazy (default) |
-| Hot inner loop | `.materialize()` first |
-| Pass data to non-WASM code | `.materialize()` — returns plain JS |
+| Hot inner loop | `.toJS()` first |
+| Pass data to non-WASM code | `.toJS()` — returns plain JS |
 
 ## Arena memory management
 

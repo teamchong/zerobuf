@@ -91,12 +91,12 @@ describe("array", () => {
 describe("toJS", () => {
   const buf = zerobuf(mem(4));
 
-  bench("materialize small object", () => {
+  bench("toJS small object", () => {
     const obj = buf.create({ x: 1, y: 2, name: "test" });
     (obj as any).toJS();
   });
 
-  bench("materialize nested structure", () => {
+  bench("toJS nested structure", () => {
     const obj = buf.create({
       user: { name: "alice", scores: [95, 87, 92] },
       tags: ["admin", "active"],
@@ -112,7 +112,7 @@ describe("toJS", () => {
     void hot.y;
   });
 
-  bench("hot loop: materialized read", () => {
+  bench("hot loop: toJS read", () => {
     void snap.x;
     void snap.y;
   });

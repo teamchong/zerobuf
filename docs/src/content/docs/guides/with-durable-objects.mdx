@@ -38,9 +38,9 @@ export class FragmentDO extends DurableObject<Env> {
     // Wrap as Proxy — lazy, zero copy
     const result = this.buf.wrapObject(resultPtr);
 
-    // Materialize before returning over RPC
+    // Convert to plain JS before returning over RPC
     // (RPC serializes, so we need a plain JS object)
-    return result.materialize() as ScanResult;
+    return result.toJS() as ScanResult;
   }
 }
 ```
@@ -49,7 +49,7 @@ export class FragmentDO extends DurableObject<Env> {
 
 **One zerobuf per DO instance.** Each DO has its own WASM memory. Create the zerobuf instance once in `ensureInitialized()`.
 
-**Materialize before RPC.** zerobuf Proxy objects reference WASM memory via absolute pointers. When you return data over DO RPC, call `.materialize()` to snapshot into a plain JS object that can be serialized.
+**toJS before RPC.** zerobuf Proxy objects reference WASM memory via absolute pointers. When you return data over DO RPC, call `.toJS()` to convert into a plain JS object that can be serialized.
 
 **Arena lifecycle.** WASM memory persists as long as the DO is alive (until hibernation evicts it). Use `arena.save()`/`arena.restore()` (planned) for per-request cleanup without resetting the entire heap.
 

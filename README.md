@@ -1,4 +1,4 @@
-# colproxy
+# zerobuf
 
 Zero-copy columnar access to WASM linear memory via TypeScript Proxy objects.
 
@@ -7,7 +7,7 @@ Zero-copy columnar access to WASM linear memory via TypeScript Proxy objects.
 Define a columnar schema. Allocate a block in `wasm.memory`. Get back Proxy objects that read/write directly from the WASM buffer — no copying, no serialization.
 
 ```typescript
-import { computeLayout, createTableView } from "colproxy";
+import { computeLayout, createTableView } from "zerobuf";
 
 const schema = [
   { name: "id", type: "i32" },
@@ -40,7 +40,7 @@ ids.buffer === wasmMemory.buffer; // true — same buffer, zero copy
 
 WASM ↔ JS data exchange typically copies data across the boundary. When working with columnar data (query results, tensors, time series), this copy overhead adds up.
 
-colproxy eliminates the copy by giving TypeScript direct access to WASM linear memory through typed array views and Proxy objects. The TypeScript side controls layout and allocation; the WASM side sees the same bytes.
+zerobuf eliminates the copy by giving TypeScript direct access to WASM linear memory through typed array views and Proxy objects. The TypeScript side controls layout and allocation; the WASM side sees the same bytes.
 
 ## API
 

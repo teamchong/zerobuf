@@ -1,5 +1,5 @@
 {
-  "name": "colproxy",
+  "name": "zerobuf",
   "version": "0.0.1",
   "description": "Zero-copy columnar access to WASM linear memory via TypeScript Proxy objects",
   "type": "module",

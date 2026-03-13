@@ -1,284 +1,299 @@
 import { describe, it, expect } from "vitest";
-import { computeLayout, createTableView, type Schema, type Allocation } from "./index.js";
+import { zerobuf } from "./index.js";
 
-// Helpers to simulate WASM memory
-function createMemory(pages = 1): WebAssembly.Memory {
-  return new WebAssembly.Memory({ initial: pages }); // 64KB per page
+function mem(pages = 1): WebAssembly.Memory {
+  return new WebAssembly.Memory({ initial: pages });
 }
 
-function simpleAlloc(memory: WebAssembly.Memory) {
-  let ptr = 0;
-  return (bytes: number) => {
-    const p = ptr;
-    ptr += bytes;
-    return p;
-  };
-}
+describe("zerobuf", () => {
+  describe("primitives", () => {
+    it("reads and writes numbers", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ a: 42, b: 3.14 });
+      expect(obj.a).toBe(42);
+      expect(obj.b).toBeCloseTo(3.14);
+    });
 
-const SCHEMA = [
-  { name: "id", type: "i32" },
-  { name: "x", type: "f64" },
-  { name: "y", type: "f64" },
-  { name: "flags", type: "u8" },
-] as const satisfies Schema;
+    it("reads and writes booleans", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ yes: true, no: false });
+      expect(obj.yes).toBe(true);
+      expect(obj.no).toBe(false);
+    });
 
-describe("computeLayout", () => {
-  it("computes correct byte sizes", () => {
-    const { totalBytes, columnOffsets } = computeLayout(SCHEMA, 100);
-    // id: 4*100 = 400 bytes at offset 0
-    // x: 8*100 = 800 bytes at offset 400 (aligned to 8 → 400)
-    // y: 8*100 = 800 bytes at offset 1200
-    // flags: 1*100 = 100 bytes at offset 2000
-    expect(columnOffsets["id"]).toBe(0);
-    expect(columnOffsets["x"]).toBe(400);
-    expect(columnOffsets["y"]).toBe(1200);
-    expect(columnOffsets["flags"]).toBe(2000);
-    expect(totalBytes).toBe(2100);
+    it("reads and writes null", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: null });
+      expect(obj.x).toBe(null);
+    });
+
+    it("reads and writes strings", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ name: "alice", greeting: "hello world" });
+      expect(obj.name).toBe("alice");
+      expect(obj.greeting).toBe("hello world");
+    });
+
+    it("handles large integers as i32", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ big: 2147483647, neg: -2147483648 });
+      expect(obj.big).toBe(2147483647);
+      expect(obj.neg).toBe(-2147483648);
+    });
+
+    it("handles floats as f64", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ pi: Math.PI, e: Math.E });
+      expect(obj.pi).toBeCloseTo(Math.PI);
+      expect(obj.e).toBeCloseTo(Math.E);
+    });
   });
 
-  it("aligns columns to element size", () => {
-    const schema = [
-      { name: "a", type: "u8" },
-      { name: "b", type: "f64" },
-    ] as const satisfies Schema;
-    const { columnOffsets } = computeLayout(schema, 3);
-    // a: 1*3 = 3 bytes at offset 0
-    // b needs 8-byte alignment → offset 8
-    expect(columnOffsets["a"]).toBe(0);
-    expect(columnOffsets["b"]).toBe(8);
-  });
-});
+  describe("objects", () => {
+    it("reads properties lazily from WASM memory", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: 1, y: 2, z: 3 });
+      expect(obj.x).toBe(1);
+      expect(obj.y).toBe(2);
+      expect(obj.z).toBe(3);
+    });
 
-describe("createTableView", () => {
-  it("reads and writes via row proxy", () => {
-    const memory = createMemory();
-    const alloc = simpleAlloc(memory);
-    const { totalBytes, columnOffsets } = computeLayout(SCHEMA, 10);
-    const offset = alloc(totalBytes);
-    const absoluteOffsets: Record<string, number> = {};
-    for (const [name, rel] of Object.entries(columnOffsets)) {
-      absoluteOffsets[name] = offset + rel;
-    }
-    const allocation: Allocation = {
-      offset,
-      rows: 10,
-      columnOffsets: absoluteOffsets,
-      totalBytes,
-    };
+    it("writes properties directly to WASM memory", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: 1 });
+      obj.x = 99;
+      expect(obj.x).toBe(99);
+    });
 
-    const table = createTableView(memory, SCHEMA, allocation);
+    it("overwrites string properties", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ name: "alice" });
+      obj.name = "bob";
+      expect(obj.name).toBe("bob");
+    });
 
-    // Write via row proxy
-    const row0 = table.row(0);
-    row0.id = 42;
-    row0.x = 3.14;
-    row0.y = 2.71;
-    row0.flags = 1;
+    it("adds new properties to existing objects", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: 1 });
+      obj.y = 2;
+      expect(obj.y).toBe(2);
+      expect(obj.x).toBe(1);
+    });
 
-    // Read back via row proxy
-    expect(table.row(0).id).toBe(42);
-    expect(table.row(0).x).toBeCloseTo(3.14);
-    expect(table.row(0).y).toBeCloseTo(2.71);
-    expect(table.row(0).flags).toBe(1);
-  });
+    it("supports Object.keys", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ a: 1, b: 2, c: 3 });
+      expect(Object.keys(obj)).toEqual(["a", "b", "c"]);
+    });
 
-  it("reads and writes via column view", () => {
-    const memory = createMemory();
-    const alloc = simpleAlloc(memory);
-    const { totalBytes, columnOffsets } = computeLayout(SCHEMA, 5);
-    const offset = alloc(totalBytes);
-    const absoluteOffsets: Record<string, number> = {};
-    for (const [name, rel] of Object.entries(columnOffsets)) {
-      absoluteOffsets[name] = offset + rel;
-    }
-    const allocation: Allocation = {
-      offset,
-      rows: 5,
-      columnOffsets: absoluteOffsets,
-      totalBytes,
-    };
+    it("supports in operator", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: 1 });
+      expect("x" in obj).toBe(true);
+      expect("y" in obj).toBe(false);
+    });
 
-    const table = createTableView(memory, SCHEMA, allocation);
-    const idCol = table.column("id");
+    it("grows beyond initial capacity", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ a: 1 });
+      // Initial capacity is 4, so adding 3 more fits
+      obj.b = 2;
+      obj.c = 3;
+      obj.d = 4;
+      // This exceeds capacity — triggers realloc
+      obj.e = 5;
+      obj.f = 6;
 
-    idCol.set(0, 100);
-    idCol.set(4, 999);
-
-    expect(idCol.get(0)).toBe(100);
-    expect(idCol.get(4)).toBe(999);
-    expect(idCol.length).toBe(5);
+      expect(obj.a).toBe(1);
+      expect(obj.b).toBe(2);
+      expect(obj.c).toBe(3);
+      expect(obj.d).toBe(4);
+      expect(obj.e).toBe(5);
+      expect(obj.f).toBe(6);
+    });
   });
 
-  it("bulk writes a column", () => {
-    const memory = createMemory();
-    const alloc = simpleAlloc(memory);
-    const { totalBytes, columnOffsets } = computeLayout(SCHEMA, 4);
-    const offset = alloc(totalBytes);
-    const absoluteOffsets: Record<string, number> = {};
-    for (const [name, rel] of Object.entries(columnOffsets)) {
-      absoluteOffsets[name] = offset + rel;
-    }
-    const allocation: Allocation = {
-      offset,
-      rows: 4,
-      columnOffsets: absoluteOffsets,
-      totalBytes,
-    };
+  describe("arrays", () => {
+    it("reads elements by index", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [10, 20, 30] });
+      const arr = obj.items as unknown[];
+      expect(arr[0]).toBe(10);
+      expect(arr[1]).toBe(20);
+      expect(arr[2]).toBe(30);
+      expect(arr.length).toBe(3);
+    });
 
-    const table = createTableView(memory, SCHEMA, allocation);
-    table.writeColumn("id", [10, 20, 30, 40]);
+    it("writes elements by index", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [1, 2, 3] });
+      const arr = obj.items as unknown[];
+      arr[1] = 99;
+      expect(arr[1]).toBe(99);
+    });
 
-    expect(table.row(0).id).toBe(10);
-    expect(table.row(1).id).toBe(20);
-    expect(table.row(2).id).toBe(30);
-    expect(table.row(3).id).toBe(40);
+    it("pushes new elements", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [1, 2] });
+      const arr = obj.items as unknown[];
+      arr.push(3);
+      arr.push(4);
+      expect(arr.length).toBe(4);
+      expect(arr[2]).toBe(3);
+      expect(arr[3]).toBe(4);
+    });
+
+    it("pops elements", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [1, 2, 3] });
+      const arr = obj.items as unknown[];
+      const val = arr.pop();
+      expect(val).toBe(3);
+      expect(arr.length).toBe(2);
+    });
+
+    it("grows beyond initial capacity", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [1] });
+      const arr = obj.items as unknown[];
+      // Initial capacity is 4, push beyond it
+      arr.push(2);
+      arr.push(3);
+      arr.push(4);
+      arr.push(5); // triggers realloc
+      arr.push(6);
+
+      expect(arr.length).toBe(6);
+      expect(arr[0]).toBe(1);
+      expect(arr[4]).toBe(5);
+      expect(arr[5]).toBe(6);
+    });
+
+    it("supports iteration", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [10, 20, 30] });
+      const arr = obj.items as unknown[];
+      const collected: unknown[] = [];
+      for (const item of arr) {
+        collected.push(item);
+      }
+      expect(collected).toEqual([10, 20, 30]);
+    });
+
+    it("supports mixed types", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [1, "hello", true, null, 3.14] });
+      const arr = obj.items as unknown[];
+      expect(arr[0]).toBe(1);
+      expect(arr[1]).toBe("hello");
+      expect(arr[2]).toBe(true);
+      expect(arr[3]).toBe(null);
+      expect(arr[4]).toBeCloseTo(3.14);
+    });
   });
 
-  it("row proxy supports in operator and Object.keys", () => {
-    const memory = createMemory();
-    const alloc = simpleAlloc(memory);
-    const { totalBytes, columnOffsets } = computeLayout(SCHEMA, 1);
-    const offset = alloc(totalBytes);
-    const absoluteOffsets: Record<string, number> = {};
-    for (const [name, rel] of Object.entries(columnOffsets)) {
-      absoluteOffsets[name] = offset + rel;
-    }
-    const allocation: Allocation = {
-      offset,
-      rows: 1,
-      columnOffsets: absoluteOffsets,
-      totalBytes,
-    };
+  describe("nested structures", () => {
+    it("reads nested objects", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({
+        user: { name: "alice", age: 30 },
+      });
+      const user = obj.user as Record<string, unknown>;
+      expect(user.name).toBe("alice");
+      expect(user.age).toBe(30);
+    });
 
-    const table = createTableView(memory, SCHEMA, allocation);
-    const row = table.row(0);
+    it("reads nested arrays of objects", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({
+        users: [
+          { name: "alice", score: 95 },
+          { name: "bob", score: 87 },
+        ],
+      });
+      const users = obj.users as Record<string, unknown>[];
+      expect(users[0].name).toBe("alice");
+      expect(users[0].score).toBe(95);
+      expect(users[1].name).toBe("bob");
+      expect(users[1].score).toBe(87);
+    });
 
-    expect("id" in row).toBe(true);
-    expect("nonexistent" in row).toBe(false);
-    expect(Object.keys(row)).toEqual(["id", "x", "y", "flags"]);
+    it("writes to nested objects", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({
+        config: { debug: false, level: 1 },
+      });
+      const config = obj.config as Record<string, unknown>;
+      config.debug = true;
+      config.level = 5;
+      expect(config.debug).toBe(true);
+      expect(config.level).toBe(5);
+    });
+
+    it("adds nested object as new property", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ name: "alice" });
+      obj.address = { city: "NYC", zip: "10001" };
+      const addr = obj.address as Record<string, unknown>;
+      expect(addr.city).toBe("NYC");
+      expect(addr.zip).toBe("10001");
+    });
+
+    it("pushes objects into arrays", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [] as unknown[] });
+      const arr = obj.items as unknown[];
+      arr.push({ x: 1, y: 2 });
+      arr.push({ x: 3, y: 4 });
+      expect((arr[0] as any).x).toBe(1);
+      expect((arr[1] as any).y).toBe(4);
+    });
+
+    it("deeply nested: 3 levels", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({
+        a: { b: { c: { value: 42 } } },
+      });
+      const val = ((obj.a as any).b as any).c as any;
+      expect(val.value).toBe(42);
+    });
   });
 
-  it("throws on out of bounds row index", () => {
-    const memory = createMemory();
-    const alloc = simpleAlloc(memory);
-    const { totalBytes, columnOffsets } = computeLayout(SCHEMA, 5);
-    const offset = alloc(totalBytes);
-    const absoluteOffsets: Record<string, number> = {};
-    for (const [name, rel] of Object.entries(columnOffsets)) {
-      absoluteOffsets[name] = offset + rel;
-    }
-    const allocation: Allocation = {
-      offset,
-      rows: 5,
-      columnOffsets: absoluteOffsets,
-      totalBytes,
-    };
+  describe("lazy materialization", () => {
+    it("does not read untouched properties", () => {
+      const buf = zerobuf(mem());
+      // Create a large object — only access one field
+      const obj = buf.create({
+        field1: "a".repeat(1000),
+        field2: "b".repeat(1000),
+        field3: "c".repeat(1000),
+        target: 42,
+      });
 
-    const table = createTableView(memory, SCHEMA, allocation);
-    expect(() => table.row(-1)).toThrow(RangeError);
-    expect(() => table.row(5)).toThrow(RangeError);
+      // Only this field is read from WASM memory — the strings are never decoded
+      expect(obj.target).toBe(42);
+    });
+
+    it("proxy has a stable pointer for WASM interop", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: 1 });
+      const ptr = (obj as any).__zerobuf_ptr;
+      expect(typeof ptr).toBe("number");
+      expect(ptr).toBeGreaterThanOrEqual(0);
+    });
   });
 
-  it("throws on unknown column", () => {
-    const memory = createMemory();
-    const alloc = simpleAlloc(memory);
-    const { totalBytes, columnOffsets } = computeLayout(SCHEMA, 1);
-    const offset = alloc(totalBytes);
-    const absoluteOffsets: Record<string, number> = {};
-    for (const [name, rel] of Object.entries(columnOffsets)) {
-      absoluteOffsets[name] = offset + rel;
-    }
-    const allocation: Allocation = {
-      offset,
-      rows: 1,
-      columnOffsets: absoluteOffsets,
-      totalBytes,
-    };
+  describe("memory growth", () => {
+    it("survives WASM memory growth", () => {
+      const memory = mem(1); // 64KB
+      const buf = zerobuf(memory);
+      const obj = buf.create({ value: 123 });
 
-    const table = createTableView(memory, SCHEMA, allocation);
-    expect(() => table.column("nope" as any)).toThrow("Unknown column");
-  });
+      // Force memory growth
+      memory.grow(1);
 
-  it("zero-copy: writing via column view is visible via row proxy", () => {
-    const memory = createMemory();
-    const alloc = simpleAlloc(memory);
-    const { totalBytes, columnOffsets } = computeLayout(SCHEMA, 3);
-    const offset = alloc(totalBytes);
-    const absoluteOffsets: Record<string, number> = {};
-    for (const [name, rel] of Object.entries(columnOffsets)) {
-      absoluteOffsets[name] = offset + rel;
-    }
-    const allocation: Allocation = {
-      offset,
-      rows: 3,
-      columnOffsets: absoluteOffsets,
-      totalBytes,
-    };
-
-    const table = createTableView(memory, SCHEMA, allocation);
-
-    // Write via column
-    table.column("x").set(1, 99.5);
-
-    // Read via row — same underlying memory
-    expect(table.row(1).x).toBeCloseTo(99.5);
-
-    // Write via row
-    table.row(2).x = 77.7;
-
-    // Read via column
-    expect(table.column("x").get(2)).toBeCloseTo(77.7);
-  });
-
-  it("zero-copy: typed array view shares WASM memory buffer", () => {
-    const memory = createMemory();
-    const alloc = simpleAlloc(memory);
-    const { totalBytes, columnOffsets } = computeLayout(SCHEMA, 10);
-    const offset = alloc(totalBytes);
-    const absoluteOffsets: Record<string, number> = {};
-    for (const [name, rel] of Object.entries(columnOffsets)) {
-      absoluteOffsets[name] = offset + rel;
-    }
-    const allocation: Allocation = {
-      offset,
-      rows: 10,
-      columnOffsets: absoluteOffsets,
-      totalBytes,
-    };
-
-    const table = createTableView(memory, SCHEMA, allocation);
-    const idArr = table.column("id").typedArray as Int32Array;
-
-    // The typed array's buffer IS the WASM memory buffer
-    expect(idArr.buffer).toBe(memory.buffer);
-  });
-
-  it("handles bigint columns (i64/u64)", () => {
-    const schema = [
-      { name: "ts", type: "i64" },
-      { name: "count", type: "u64" },
-    ] as const satisfies Schema;
-
-    const memory = createMemory();
-    const alloc = simpleAlloc(memory);
-    const { totalBytes, columnOffsets } = computeLayout(schema, 3);
-    const offset = alloc(totalBytes);
-    const absoluteOffsets: Record<string, number> = {};
-    for (const [name, rel] of Object.entries(columnOffsets)) {
-      absoluteOffsets[name] = offset + rel;
-    }
-    const allocation: Allocation = {
-      offset,
-      rows: 3,
-      columnOffsets: absoluteOffsets,
-      totalBytes,
-    };
-
-    const table = createTableView(memory, schema, allocation);
-    table.row(0).ts = 1710000000000n;
-    table.row(0).count = 42n;
-
-    expect(table.row(0).ts).toBe(1710000000000n);
-    expect(table.row(0).count).toBe(42n);
+      // Proxy still reads correctly (DataView recreated on access)
+      expect(obj.value).toBe(123);
+    });
   });
 });

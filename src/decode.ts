@@ -122,8 +122,15 @@ function deref(arena: Arena, handlePtr: number): number {
 
 // ---------- Array Proxy ----------
 
-/** Create a Proxy for an array in WASM memory. */
+/**
+ * Create a Proxy for an array in WASM memory.
+ * Element reads are cached — repeated access to the same index avoids
+ * re-decoding from WASM. Cache is invalidated per-element on write,
+ * and cleared on push/pop.
+ */
 export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
+  const cache = new Map<number, unknown>();
+
   const handler: ProxyHandler<unknown[]> = {
     get(_target, prop) {
       if (prop === "__zerobuf_ptr") return handlePtr;
@@ -140,12 +147,19 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
           for (const item of items) {
             arrayPush(arena, handlePtr, item);
           }
+          // Push may realloc — clear cache (pointers to nested proxies still valid via handles)
+          cache.clear();
           return arena.readU32(deref(arena, handlePtr) + 4);
         };
       }
 
       if (prop === "pop") {
-        return () => arrayPop(arena, handlePtr);
+        return () => {
+          const dp = deref(arena, handlePtr);
+          const len = arena.readU32(dp + 4);
+          cache.delete(len - 1);
+          return arrayPop(arena, handlePtr);
+        };
       }
 
       if (prop === "toJS") {
@@ -157,7 +171,13 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
           const dp = deref(arena, handlePtr);
           const len = arena.readU32(dp + 4);
           for (let i = 0; i < len; i++) {
-            yield readValue(arena, dp + ARRAY_HEADER + i * VALUE_SLOT);
+            if (cache.has(i)) {
+              yield cache.get(i);
+            } else {
+              const val = readValue(arena, dp + ARRAY_HEADER + i * VALUE_SLOT);
+              cache.set(i, val);
+              yield val;
+            }
           }
         };
       }
@@ -167,7 +187,10 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
         if (Number.isInteger(index) && index >= 0) {
           const len = arena.readU32(dataPtr + 4);
           if (index >= len) return undefined;
-          return readValue(arena, dataPtr + ARRAY_HEADER + index * VALUE_SLOT);
+          if (cache.has(index)) return cache.get(index);
+          const val = readValue(arena, dataPtr + ARRAY_HEADER + index * VALUE_SLOT);
+          cache.set(index, val);
+          return val;
         }
       }
 
@@ -182,6 +205,7 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
           const len = arena.readU32(dataPtr + 4);
           if (index >= len) return false;
           writeVal(arena, dataPtr + ARRAY_HEADER + index * VALUE_SLOT, value);
+          cache.delete(index);
           return true;
         }
       }

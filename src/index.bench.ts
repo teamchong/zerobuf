@@ -66,10 +66,19 @@ describe("array", () => {
     buf.create({ items: Array.from({ length: 100 }, (_, i) => i) });
   });
 
-  bench("read array element by index", () => {
+  bench("read array element (cold)", () => {
     const obj = buf.create({ items: [1, 2, 3, 4, 5] });
     const arr = obj.items as unknown[];
     void arr[2];
+  });
+
+  const cached = zerobuf(mem(4)).create({ items: [1, 2, 3, 4, 5] });
+  const cachedArr = cached.items as unknown[];
+  // Prime the cache
+  void cachedArr[2];
+
+  bench("read array element (cached)", () => {
+    void cachedArr[2];
   });
 
   bench("push 10 elements", () => {

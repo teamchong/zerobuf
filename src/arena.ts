@@ -15,7 +15,7 @@ const PAGE_SIZE = 65536; // 64KB
 
 export interface ArenaOptions {
   /**
-   * Maximum number of WASM pages to allow (default: 65536 = 4GB).
+   * Maximum number of WASM pages to allow (default: 65535 = ~4GB).
    * Set lower to bound memory usage.
    */
   maxPages?: number;

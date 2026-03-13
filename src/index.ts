@@ -12,11 +12,11 @@ export interface ZeroBuf {
   readonly arena: Arena;
 
   /**
-   * Create a JS value in WASM memory. Returns a Proxy that reads/writes
-   * directly from WASM linear memory — zero copy.
+   * Create a JS value in WASM memory. Returns an accessor object that
+   * reads/writes directly from WASM linear memory — zero copy.
    *
-   * Objects and arrays are fully recursive — nested structures are all
-   * allocated in WASM memory and accessed lazily through Proxies.
+   * Objects use defineProperty getters (V8-optimized). Arrays use a
+   * cached Proxy. Nested structures are allocated recursively.
    */
   create<T extends Record<string, unknown>>(value: T): T & Record<string, unknown>;
 

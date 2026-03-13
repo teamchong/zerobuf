@@ -330,7 +330,7 @@ export function createObjectProxy(arena: Arena, handlePtr: number): Record<strin
 // ---------- Internal: array growth ----------
 
 function arrayPush(arena: Arena, handlePtr: number, value: unknown): void {
-  let dataPtr = deref(arena, handlePtr);
+  const dataPtr = deref(arena, handlePtr);
   const capacity = arena.readU32(dataPtr);
   const length = arena.readU32(dataPtr + 4);
 
@@ -371,7 +371,7 @@ function arrayPop(arena: Arena, handlePtr: number): unknown {
 // ---------- Internal: object growth ----------
 
 function objectAdd(arena: Arena, handlePtr: number, key: string, value: unknown): void {
-  let dataPtr = deref(arena, handlePtr);
+  const dataPtr = deref(arena, handlePtr);
   const capacity = arena.readU32(dataPtr);
   const count = arena.readU32(dataPtr + 4);
 

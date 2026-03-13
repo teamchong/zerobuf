@@ -187,6 +187,22 @@ describe("zerobuf", () => {
       expect(obj.e).toBe(5);
       expect(obj.f).toBe(6);
     });
+
+    it("Object.keys reflects dynamically added keys", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: 1 });
+      expect(Object.keys(obj)).toEqual(["x"]);
+      obj.y = 2;
+      obj.z = 3;
+      expect(Object.keys(obj)).toEqual(["x", "y", "z"]);
+    });
+
+    it("delete throws in strict mode", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: 1 });
+      expect(() => { delete (obj as any).x; }).toThrow(TypeError);
+      expect(obj.x).toBe(1);
+    });
   });
 
   describe("arrays", () => {
@@ -265,6 +281,40 @@ describe("zerobuf", () => {
       expect(arr[2]).toBe(true);
       expect(arr[3]).toBe(null);
       expect(arr[4]).toBeCloseTo(3.14);
+    });
+
+    it("pop on empty array returns undefined", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [] as unknown[] });
+      const arr = obj.items as unknown[];
+      expect(arr.pop()).toBeUndefined();
+      expect(arr.length).toBe(0);
+    });
+
+    it("delete throws in strict mode", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [1, 2, 3] });
+      const arr = obj.items as unknown[];
+      expect(() => { delete (arr as any)[0]; }).toThrow(TypeError);
+      expect(arr[0]).toBe(1);
+    });
+
+    it("cached reads return same value", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [1, "hello", { x: 1 }] });
+      const arr = obj.items as unknown[];
+      const first = arr[2];
+      const second = arr[2];
+      expect(first).toBe(second); // same cached reference
+    });
+
+    it("set invalidates cache", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [1, 2, 3] });
+      const arr = obj.items as unknown[];
+      expect(arr[1]).toBe(2);
+      arr[1] = 99;
+      expect(arr[1]).toBe(99);
     });
   });
 
@@ -421,6 +471,40 @@ describe("zerobuf", () => {
         sum += snap.x + snap.y;
       }
       expect(sum).toBeCloseTo(5850, 0);
+    });
+  });
+
+  describe("wrapObject / wrapArray / read", () => {
+    it("wrapObject reads existing WASM data", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: 42, name: "test" });
+      const ptr = (obj as any).__zerobuf_ptr;
+      const wrapped = buf.wrapObject(ptr);
+      expect(wrapped.x).toBe(42);
+      expect(wrapped.name).toBe("test");
+    });
+
+    it("wrapArray reads existing WASM data", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [10, 20, 30] });
+      const arr = obj.items as any;
+      const ptr = arr.__zerobuf_ptr;
+      const wrapped = buf.wrapArray(ptr);
+      expect(wrapped[0]).toBe(10);
+      expect(wrapped.length).toBe(3);
+    });
+
+    it("read decodes raw tagged value at offset", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: 3.14 });
+      // The object's first entry value is at a known offset
+      // Use the arena to find it
+      const handlePtr = (obj as any).__zerobuf_ptr;
+      const dataPtr = buf.arena.readU32(handlePtr);
+      // First entry value starts at dataPtr + 8 (object header) + 8 (key ptr + key len)
+      const valueOffset = dataPtr + 8 + 8;
+      const val = buf.read(valueOffset);
+      expect(val).toBeCloseTo(3.14);
     });
   });
 

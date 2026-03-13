@@ -1,6 +1,6 @@
 ---
 title: Getting Started
-description: Set up zerobuf for zero-copy JS ↔ WASM data exchange.
+description: Set up zerobuf for structured data in WebAssembly.Memory.
 ---
 
 ## Install
@@ -12,36 +12,49 @@ Not published to npm yet. Use as a local dependency or git submodule:
 pnpm add ../zerobuf
 ```
 
-## Basic usage
+## Standalone (no WASM module)
+
+You don't need a WASM module to use zerobuf. Create a `WebAssembly.Memory` directly:
 
 ```typescript
 import { zerobuf } from "zerobuf";
 
-// Load your WASM module
-const wasm = await WebAssembly.instantiate(wasmBytes);
-const memory = wasm.instance.exports.memory as WebAssembly.Memory;
+const buf = zerobuf(new WebAssembly.Memory({ initial: 1 }));
 
-// Create zerobuf over shared memory
-// startOffset = past WASM's static data (e.g. __heap_base)
-const buf = zerobuf(memory, wasm.instance.exports.__heap_base.value);
-
-// Create objects directly in WASM linear memory
 const user = buf.create({
   name: "alice",
   scores: [95, 87, 92],
   address: { city: "NYC", zip: "10001" },
 });
 
-// Read — defineProperty getters, reads from WASM memory on access
+// Read — defineProperty getters, reads from memory on access
 console.log(user.name);       // "alice"
 console.log(user.scores[0]);  // 95
 
-// Write — directly to WASM memory
+// Write — directly to memory
 user.name = "bob";
 user.scores.push(88);
 
 // Add new properties
 user.email = "bob@example.com";
+```
+
+## With a WASM module
+
+When sharing memory with WASM (Zig, Rust, C, etc.), pass the module's memory and set `startOffset` past its static data:
+
+```typescript
+import { zerobuf } from "zerobuf";
+
+const wasm = await WebAssembly.instantiate(wasmBytes);
+const memory = wasm.instance.exports.memory as WebAssembly.Memory;
+
+// startOffset = past WASM's static data (e.g. __heap_base)
+const buf = zerobuf(memory, wasm.instance.exports.__heap_base.value);
+
+const point = buf.create({ x: 1.0, y: 2.0 });
+wasm.instance.exports.transform(point.__zerobuf_ptr); // WASM reads/writes same memory
+console.log(point.x); // reads WASM's output
 ```
 
 ## .toJS()

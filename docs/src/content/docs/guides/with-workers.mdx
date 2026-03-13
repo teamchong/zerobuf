@@ -1,0 +1,70 @@
+---
+title: With Workers
+description: Using zerobuf in Cloudflare Workers, Web Workers, and Service Workers.
+---
+
+## Overview
+
+zerobuf works in any environment with `WebAssembly.Memory`. This includes Cloudflare Workers, browser Web Workers, and Service Workers.
+
+## Cloudflare Worker
+
+```typescript
+import { zerobuf } from "zerobuf";
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    // With a WASM module
+    const instance = await WebAssembly.instantiate(env.WASM_MODULE);
+    const buf = zerobuf(
+      instance.exports.memory as WebAssembly.Memory,
+      (instance.exports.__heap_base as WebAssembly.Global).value,
+    );
+
+    const result = buf.create({ query: "hello", ts: Date.now() });
+    instance.exports.process(result.__zerobuf_ptr);
+    return Response.json(result.toJS());
+  },
+};
+```
+
+## Cloudflare Worker (standalone)
+
+```typescript
+import { zerobuf } from "zerobuf";
+
+export default {
+  async fetch(request: Request): Promise<Response> {
+    // No WASM module — just structured binary storage
+    const buf = zerobuf(new WebAssembly.Memory({ initial: 1 }));
+    const data = buf.create(await request.json());
+    // ... process data ...
+    return Response.json(data.toJS());
+  },
+};
+```
+
+## Browser Web Worker
+
+```typescript
+// worker.ts
+import { zerobuf } from "zerobuf";
+
+onmessage = async (e) => {
+  const { wasmBytes, input } = e.data;
+  const wasm = await WebAssembly.instantiate(wasmBytes);
+  const buf = zerobuf(wasm.instance.exports.memory as WebAssembly.Memory);
+
+  const obj = buf.create(input);
+  wasm.instance.exports.compute(obj.__zerobuf_ptr);
+  postMessage(obj.toJS());
+};
+```
+
+## Key Points
+
+**One zerobuf per memory.** Each `WebAssembly.Memory` instance gets its own zerobuf. Don't share a zerobuf instance across different memories.
+
+**toJS before postMessage/Response.** Accessor objects reference memory via pointers. Call `.toJS()` to get a plain JS object before sending over `postMessage` or returning in a `Response`.
+
+**Worker isolation.** Each Worker gets its own memory. To share data between Workers, serialize with `.toJS()` or use `SharedArrayBuffer`-backed memory (browser Web Workers only).

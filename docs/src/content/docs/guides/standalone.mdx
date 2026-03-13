@@ -1,0 +1,58 @@
+---
+title: Standalone (No WASM Module)
+description: Use zerobuf as a structured binary buffer without any WASM module.
+---
+
+## Overview
+
+You don't need a WASM module to use zerobuf. Create a `WebAssembly.Memory` directly and use it as a structured binary buffer. This works in any JS runtime.
+
+## Pattern
+
+```typescript
+import { zerobuf } from "zerobuf";
+
+// No WASM module — just a memory buffer
+const memory = new WebAssembly.Memory({ initial: 1 });
+const buf = zerobuf(memory);
+
+// Structured data, stored in binary
+const config = buf.create({
+  region: "us-east-1",
+  maxRetries: 3,
+  endpoints: ["a.example.com", "b.example.com"],
+});
+
+// Reads/writes go directly to the buffer
+config.maxRetries = 5;
+console.log(config.region); // "us-east-1"
+
+// Nested objects and arrays work
+config.endpoints.push("c.example.com");
+```
+
+## When to Use This
+
+- **Shared memory between Workers**: `WebAssembly.Memory` can be shared across Web Workers via `postMessage` (with `SharedArrayBuffer` backing). Both workers read/write the same structured data without serialization.
+- **Binary serialization**: use `.toJS()` on one side, `buf.create()` on the other — or share the raw `memory.buffer` bytes.
+- **Structured arena allocation**: append-only bump allocator with handle indirection. No GC pressure for short-lived objects.
+
+## Sharing Between Workers
+
+```typescript
+// Main thread
+const memory = new WebAssembly.Memory({ initial: 1, maximum: 100, shared: true });
+const buf = zerobuf(memory);
+const data = buf.create({ counter: 0 });
+
+worker.postMessage({ memory, ptr: data.__zerobuf_ptr });
+
+// Worker thread
+onmessage = (e) => {
+  const buf = zerobuf(e.data.memory);
+  const data = buf.wrapObject(e.data.ptr);
+  data.counter = 42; // main thread sees this immediately
+};
+```
+
+Note: concurrent writes from multiple workers need external synchronization (e.g. `Atomics`). zerobuf does not provide locks.

@@ -20,8 +20,10 @@ export default defineConfig({
         {
           label: "Guides",
           items: [
-            { label: "With Zig", slug: "guides/with-zig" },
+            { label: "Standalone", slug: "guides/standalone" },
+            { label: "With Workers", slug: "guides/with-workers" },
             { label: "With Durable Objects", slug: "guides/with-durable-objects" },
+            { label: "With Zig", slug: "guides/with-zig" },
           ],
         },
         {

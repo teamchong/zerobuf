@@ -1,6 +1,6 @@
 # zerobuf
 
-Shared memory layout for JS and WASM. Both sides read/write the same `WebAssembly.Memory` — no serialization, no copies.
+Structured binary layout over `WebAssembly.Memory`. Works in any JS runtime — browser, Worker, Node, Deno, Bun. Use standalone or share memory with WASM modules (Zig, Rust, C, etc.).
 
 Used internally by [querymode](https://github.com/teamchong/querymode), [gitmode](https://github.com/teamchong/gitmode), [drawmode](https://github.com/teamchong/drawmode), and other *mode repos. Not published to npm yet.
 

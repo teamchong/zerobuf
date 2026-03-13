@@ -1,9 +1,9 @@
 ---
 title: zerobuf
-description: Shared memory layout for JS and WASM.
+description: Structured binary layout over WebAssembly.Memory.
 template: splash
 hero:
-  tagline: Both sides read/write the same WebAssembly.Memory. No serialization, no copies.
+  tagline: Structured data in WebAssembly.Memory. Works in any JS runtime — browser, Worker, Node, Deno, Bun.
   actions:
     - text: Get Started
       link: /zerobuf/getting-started/
@@ -16,18 +16,30 @@ hero:
 
 ## What it does
 
-JS and WASM share one `WebAssembly.Memory`. zerobuf defines a binary layout (tagged values, strings, arrays, objects) and provides accessor objects on the JS side that read/write directly to WASM linear memory.
+zerobuf defines a binary layout (tagged values, strings, arrays, objects) over `WebAssembly.Memory` and gives you JS accessor objects that read/write directly — no serialization, no copies.
+
+You can use it with a WASM module (Zig, Rust, C, etc.) for shared-memory interop, or standalone with just `new WebAssembly.Memory()` as a structured binary buffer.
 
 ```typescript
 import { zerobuf } from "zerobuf";
 
-const buf = zerobuf(wasm.exports.memory);
+// Standalone — no WASM module needed
+const buf = zerobuf(new WebAssembly.Memory({ initial: 1 }));
 const point = buf.create({ x: 1.0, y: 2.0, label: "origin" });
+point.x = 3.14;  // writes to memory
+console.log(point.x);  // reads from memory
 
-point.x = 3.14;  // writes to WASM memory
-transform(point.__zerobuf_ptr);  // WASM reads the same bytes
-console.log(point.x);  // reads WASM's output
+// Or with WASM — both sides share the same memory
+const buf2 = zerobuf(wasm.exports.memory);
 ```
+
+## Where it runs
+
+Anywhere `WebAssembly.Memory` is available:
+
+- Browser (main thread, Web Workers, Service Workers)
+- Cloudflare Workers and Durable Objects
+- Node.js, Deno, Bun
 
 ## Current state
 

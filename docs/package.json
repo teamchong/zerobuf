@@ -8,8 +8,12 @@
     "preview": "astro preview"
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.34.0",
-    "astro": "^5.7.0",
+    "@astrojs/starlight": "0.34.8",
+    "astro": "5.18.0",
     "sharp": "^0.33.0"
+  },
+  "overrides": {
+    "@astrojs/sitemap": "3.7.0",
+    "zod": "3.25.76"
   }
 }

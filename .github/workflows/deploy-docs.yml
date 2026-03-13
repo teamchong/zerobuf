@@ -31,7 +31,7 @@ jobs:
       - name: Install and build docs
         working-directory: docs
         run: |
-          npm install
+          npm ci
           npx astro build
 
       - uses: actions/configure-pages@v5

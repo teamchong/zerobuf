@@ -85,6 +85,33 @@ const name = result.items[0].name;  // reads 3 pointers + 1 string decode
 
 This matters for query engines, ML inference, game state — anywhere WASM produces large results and JS only needs part of them.
 
+## Why this is safe: no race conditions
+
+JS and WASM on the same thread **never run concurrently**. The call stack is strictly sequential:
+
+```
+JS calls WASM → WASM runs to completion → returns to JS
+WASM calls JS → JS runs to completion → returns to WASM
+```
+
+No preemption, no interleaving. When JS reads or writes via a zerobuf Proxy, WASM is not running. When WASM reads or writes the same memory, JS is not running. One source of truth, one writer at a time, by design.
+
+```
+JS:    ████░░░░████░░░░████
+WASM:  ░░░░████░░░░████░░░░
+       ↑ never overlapping on the same thread
+```
+
+This is why zero-copy sharing works without locks, atomics, or synchronization. The single-threaded event loop guarantees it.
+
+| Scenario | Concurrent? | Race condition? |
+|---|---|---|
+| Same thread (main or Web Worker) | No — call/return | Impossible |
+| WASM in separate Worker + `SharedArrayBuffer` | Yes | Yes — needs Atomics |
+| Cloudflare Workers | No — `SharedArrayBuffer` disabled (Spectre) | Impossible |
+
+zerobuf targets the first and third scenarios. If you need multi-threaded shared WASM memory, you need Atomics — that's a different problem.
+
 ## Comparison
 
 | | wasm-bindgen | AssemblyScript | Emscripten | zerobuf |

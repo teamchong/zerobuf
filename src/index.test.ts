@@ -283,6 +283,71 @@ describe("zerobuf", () => {
     });
   });
 
+  describe("materialize", () => {
+    it("materializes object into plain JS object", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: 1, name: "alice", active: true });
+      const snap = (obj as any).materialize();
+
+      // snap is a plain JS object, not a Proxy
+      expect(snap.x).toBe(1);
+      expect(snap.name).toBe("alice");
+      expect(snap.active).toBe(true);
+      expect(snap.__zerobuf_ptr).toBeUndefined(); // no proxy internals
+    });
+
+    it("materializes nested structures recursively", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({
+        user: { name: "alice", scores: [95, 87, 92] },
+        tags: ["admin", "active"],
+      });
+      const snap = (obj as any).materialize();
+
+      expect(snap.user.name).toBe("alice");
+      expect(snap.user.scores).toEqual([95, 87, 92]);
+      expect(snap.tags).toEqual(["admin", "active"]);
+      expect(Array.isArray(snap.user.scores)).toBe(true);
+      expect(Array.isArray(snap.tags)).toBe(true);
+    });
+
+    it("materializes array via .materialize()", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ items: [1, 2, 3] });
+      const arr = obj.items as any;
+      const snap = arr.materialize();
+
+      expect(snap).toEqual([1, 2, 3]);
+      expect(Array.isArray(snap)).toBe(true);
+    });
+
+    it("materialized object is decoupled from WASM memory", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: 1 });
+      const snap = (obj as any).materialize();
+
+      // Mutate the proxy (writes to WASM memory)
+      obj.x = 99;
+
+      // snap is unaffected — it's a plain JS object
+      expect(snap.x).toBe(1);
+      expect(obj.x).toBe(99);
+    });
+
+    it("is efficient for hot loops", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ x: 3.14, y: 2.71 });
+      const snap = (obj as any).materialize();
+
+      // Simulate hot loop — snap.x is a plain JS property, no Proxy overhead
+      let sum = 0;
+      for (let i = 0; i < 1000; i++) {
+        sum += snap.x + snap.y;
+      }
+      expect(sum).toBeCloseTo(5850, 0);
+    });
+  });
+
   describe("memory growth", () => {
     it("survives WASM memory growth", () => {
       const memory = mem(1); // 64KB

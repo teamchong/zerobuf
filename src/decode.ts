@@ -36,6 +36,60 @@ export function readValue(arena: Arena, offset: number): unknown {
   }
 }
 
+/**
+ * Eagerly read a tagged value into a plain JS object/array.
+ * Recursively materializes all nested structures — no Proxies in the result.
+ * Use this when you need to read the same fields many times (hot loops).
+ */
+export function readValueEager(arena: Arena, offset: number): unknown {
+  const tag = arena.readU8(offset) as Tag;
+
+  switch (tag) {
+    case Tag.Null:
+      return null;
+    case Tag.Bool:
+      return arena.readU32(offset + 4) !== 0;
+    case Tag.I32:
+      return arena.readI32(offset + 4);
+    case Tag.F64:
+      return arena.readF64(offset + 8);
+    case Tag.String:
+      return readString(arena, arena.readU32(offset + 4));
+    case Tag.Array:
+      return materializeArray(arena, arena.readU32(offset + 4));
+    case Tag.Object:
+      return materializeObject(arena, arena.readU32(offset + 4));
+    default:
+      return null;
+  }
+}
+
+/** Materialize an array handle into a plain JS array (recursive). */
+export function materializeArray(arena: Arena, handlePtr: number): unknown[] {
+  const dataPtr = deref(arena, handlePtr);
+  const length = arena.readU32(dataPtr + 4);
+  const result: unknown[] = [];
+  for (let i = 0; i < length; i++) {
+    result.push(readValueEager(arena, dataPtr + ARRAY_HEADER + i * VALUE_SLOT));
+  }
+  return result;
+}
+
+/** Materialize an object handle into a plain JS object (recursive). */
+export function materializeObject(arena: Arena, handlePtr: number): Record<string, unknown> {
+  const dataPtr = deref(arena, handlePtr);
+  const count = arena.readU32(dataPtr + 4);
+  const result: Record<string, unknown> = {};
+  for (let i = 0; i < count; i++) {
+    const entryOffset = dataPtr + OBJECT_HEADER + i * OBJECT_ENTRY;
+    const keyPtr = arena.readU32(entryOffset);
+    const keyLen = arena.readU32(entryOffset + 4);
+    const key = decoder.decode(new Uint8Array(arena.memory.buffer, keyPtr, keyLen));
+    result[key] = readValueEager(arena, entryOffset + 8);
+  }
+  return result;
+}
+
 /** Read a string from its header pointer. */
 export function readString(arena: Arena, ptr: number): string {
   const byteLen = arena.readU32(ptr);
@@ -78,6 +132,10 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
 
       if (prop === "pop") {
         return () => arrayPop(arena, handlePtr);
+      }
+
+      if (prop === "materialize") {
+        return () => materializeArray(arena, handlePtr);
       }
 
       if (prop === Symbol.iterator) {
@@ -123,7 +181,7 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
           return index < arena.readU32(deref(arena, handlePtr) + 4);
         }
       }
-      return prop === "length" || prop === "push" || prop === "pop";
+      return prop === "length" || prop === "push" || prop === "pop" || prop === "materialize";
     },
 
     ownKeys() {
@@ -153,6 +211,11 @@ export function createObjectProxy(arena: Arena, handlePtr: number): Record<strin
     get(_target, prop) {
       if (prop === "__zerobuf_ptr") return handlePtr;
       if (prop === "__zerobuf_arena") return arena;
+
+      if (prop === "materialize") {
+        return () => materializeObject(arena, handlePtr);
+      }
+
       if (typeof prop !== "string") return undefined;
 
       const dataPtr = deref(arena, handlePtr);

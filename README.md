@@ -85,6 +85,43 @@ const name = result.items[0].name;  // reads 3 pointers + 1 string decode
 
 This matters for query engines, ML inference, game state — anywhere WASM produces large results and JS only needs part of them.
 
+## Materialization: when you need speed over laziness
+
+Lazy reads are great when you touch each field once. But if you read `obj.x` in a hot loop 1000 times, that's 1000 Proxy traps → 1000 DataView reads. Call `.materialize()` to snapshot into a plain JS object first:
+
+```typescript
+const obj = buf.create({ x: 3.14, y: 2.71, items: [1, 2, 3] });
+
+// Hot loop — materialize first, then iterate
+const snap = obj.materialize();  // plain JS object, no Proxy
+for (let i = 0; i < 10_000; i++) {
+  process(snap.x, snap.y);      // normal JS property access, full speed
+}
+
+// After WASM mutates the data, re-materialize for a fresh snapshot
+wasmTransform(obj.ptr);
+const snap2 = obj.materialize();
+```
+
+`materialize()` recursively converts the entire structure — nested objects become plain objects, arrays become plain arrays. The result is decoupled from WASM memory: mutating the Proxy won't affect the snapshot, and vice versa.
+
+Works on both objects and arrays:
+
+```typescript
+const arr = obj.items;
+const plainArr = arr.materialize();  // [1, 2, 3] — plain JS array
+```
+
+**When to use which:**
+
+| Pattern | Use |
+|---|---|
+| Read a few fields once | Lazy (default) — no materialization cost |
+| Read many fields in a loop | `.materialize()` first — pay once, read fast |
+| Pass data to non-WASM code | `.materialize()` — returns plain JS, no Proxy |
+| WASM writes, JS reads result | Lazy — read only what you need |
+| Hot inner loop | `.materialize()` — eliminate Proxy overhead |
+
 ## Why this is safe: no race conditions
 
 JS and WASM on the same thread **never run concurrently**. The call stack is strictly sequential:

@@ -5,7 +5,7 @@ import { readValue, createObjectProxy, createArrayProxy } from "./decode.js";
 export { Arena } from "./arena.js";
 export { Tag, VALUE_SLOT, STRING_HEADER, ARRAY_HEADER, OBJECT_HEADER, OBJECT_ENTRY } from "./types.js";
 export { writeValue, allocString, allocArray, allocObject } from "./encode.js";
-export { readValue, readString, createObjectProxy, createArrayProxy } from "./decode.js";
+export { readValue, readValueEager, readString, createObjectProxy, createArrayProxy, materializeObject, materializeArray } from "./decode.js";
 
 export interface ZeroBuf {
   /** The arena allocator managing WASM memory */

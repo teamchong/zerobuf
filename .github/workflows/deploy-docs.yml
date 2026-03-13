@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths: [docs/**]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,7 +13,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -30,8 +31,8 @@ jobs:
       - name: Install and build docs
         working-directory: docs
         run: |
-          npm ci
-          npm run build
+          npm install
+          npx astro build
 
       - uses: actions/configure-pages@v5
 

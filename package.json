@@ -1,0 +1,26 @@
+{
+  "name": "colproxy",
+  "version": "0.0.1",
+  "description": "Zero-copy columnar access to WASM linear memory via TypeScript Proxy objects",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest",
+    "check": "tsc --noEmit"
+  },
+  "keywords": ["wasm", "columnar", "zero-copy", "proxy", "memory"],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

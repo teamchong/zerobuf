@@ -35,7 +35,7 @@ export class FragmentDO extends DurableObject<Env> {
     this.wasmExports.executeScan(request.ptr);
     const resultPtr = this.wasmExports.getResultPtr();
 
-    // Wrap as Proxy — lazy, zero copy
+    // Wrap as accessor object — lazy, zero copy
     const result = this.buf.wrapObject(resultPtr);
 
     // Convert to plain JS before returning over RPC

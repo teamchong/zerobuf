@@ -1,15 +1,18 @@
 ---
 title: Getting Started
-description: Install zerobuf and create your first zero-copy object in WASM memory.
+description: Set up zerobuf for zero-copy JS ↔ WASM data exchange.
 ---
 
 ## Install
 
+Not published to npm yet. Use as a local dependency or git submodule:
+
 ```bash
-pnpm add zerobuf
+# From a sibling *mode repo
+pnpm add ../zerobuf
 ```
 
-## Basic Usage
+## Basic usage
 
 ```typescript
 import { zerobuf } from "zerobuf";
@@ -18,7 +21,8 @@ import { zerobuf } from "zerobuf";
 const wasm = await WebAssembly.instantiate(wasmBytes);
 const memory = wasm.instance.exports.memory as WebAssembly.Memory;
 
-// Create a zerobuf instance over shared memory
+// Create zerobuf over shared memory
+// startOffset = past WASM's static data (e.g. __heap_base)
 const buf = zerobuf(memory, wasm.instance.exports.__heap_base.value);
 
 // Create objects directly in WASM linear memory
@@ -28,9 +32,9 @@ const user = buf.create({
   address: { city: "NYC", zip: "10001" },
 });
 
-// Read — lazy, decodes from WASM memory on access
-console.log(user.name);         // "alice"
-console.log(user.scores[0]);    // 95
+// Read — defineProperty getters, reads from WASM memory on access
+console.log(user.name);       // "alice"
+console.log(user.scores[0]);  // 95
 
 // Write — directly to WASM memory
 user.name = "bob";
@@ -40,37 +44,34 @@ user.scores.push(88);
 user.email = "bob@example.com";
 ```
 
-## toJS
+## .toJS()
 
-If you read the same field many times (hot loops), convert to a plain JS object first:
+Converts to a plain JS object. Use for hot loops or passing data over RPC (Proxy objects can't be serialized).
 
 ```typescript
 const snap = user.toJS();
 
-// snap is a plain JS object — no Proxy overhead
 for (let i = 0; i < 10_000; i++) {
-  process(snap.name, snap.scores);
+  process(snap.name, snap.scores);  // plain JS, no WASM access
 }
 ```
 
-## Wrapping WASM Output
+## Wrapping WASM output
 
-When your WASM function writes a result into memory, wrap the pointer as a Proxy:
+When WASM writes a zerobuf object, wrap the pointer:
 
 ```typescript
 const resultPtr = wasm.instance.exports.computeResult() as number;
 const result = buf.wrapObject(resultPtr);
-
-// Lazy — only reads the fields you touch
-console.log(result.score);
+console.log(result.score);  // reads from WASM memory
 ```
 
-## Memory Limits
+## Memory limits
 
-zerobuf auto-grows WASM memory using a doubling strategy. Cap it with `maxPages`:
+Auto-grows with doubling strategy. Cap with `maxPages`:
 
 ```typescript
 const buf = zerobuf(memory, 0, { maxPages: 2048 }); // max 128MB
 ```
 
-Maximum is 65535 pages (4GB minus 64KB — avoids a Chrome overflow bug).
+Max is 65535 pages (~4GB).

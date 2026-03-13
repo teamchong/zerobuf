@@ -32,6 +32,8 @@ The tag determines which payload fields are used:
 | `String` | 4 | string header ptr (u32) | unused |
 | `Array` | 5 | array handle ptr (u32) | unused |
 | `Object` | 6 | object handle ptr (u32) | unused |
+| `BigInt` | 7 | unused | value (i64) |
+| `Bytes` | 8 | byte buffer header ptr (u32) | unused |
 
 ## String
 
@@ -42,6 +44,20 @@ Offset  Size       Field
 ```
 
 Strings are immutable once written. To change a string property, allocate a new string and update the pointer in the value slot.
+
+## Bytes
+
+Same layout as String. The tag distinguishes them (String = UTF-8 text, Bytes = raw binary).
+
+```
+Offset  Size       Field
+0       4          byteLength (u32)
+4       byteLength raw bytes
+```
+
+## BigInt
+
+Stored as i64 in payload B (offset +8). Same slot layout as F64 but interpreted as a signed 64-bit integer.
 
 ## Array
 
@@ -98,7 +114,7 @@ Offset  Size  Field
 8       16    value (VALUE_SLOT — tagged value)
 ```
 
-Property lookup is **linear scan** — compare key bytes for each entry. This is O(n) in property count, which is fine for typical object sizes (< 100 properties). Schema mode (planned) will provide O(1) fixed-offset access.
+The JS library uses `Object.defineProperty` with captured entry indices — each key's offset is resolved once at creation time. Reads and writes are O(1). The binary layout stores entries sequentially, so a new language binding would do a linear scan on first access to build its own index.
 
 ### Growth
 

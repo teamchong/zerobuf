@@ -1,9 +1,9 @@
 ---
 title: zerobuf
-description: Zero-copy JS ↔ WASM data exchange via shared memory.
+description: Shared memory layout for JS and WASM.
 template: splash
 hero:
-  tagline: Both sides read and write the same bytes. Zero copy, zero serialization.
+  tagline: Both sides read/write the same WebAssembly.Memory. No serialization, no copies.
   actions:
     - text: Get Started
       link: /zerobuf/getting-started/
@@ -14,49 +14,25 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid } from "@astrojs/starlight/components";
+## What it does
 
-## Why zerobuf
-
-Every WASM tool today copies data across the JS/WASM boundary. wasm-bindgen, AssemblyScript, Emscripten — all serialize in, copy, deserialize out. Two full copies per call.
-
-zerobuf eliminates this. JS and WASM share one `WebAssembly.Memory`. Both sides agree on a binary layout. Proxy objects on the JS side read/write directly to WASM linear memory.
-
-<CardGrid>
-  <Card title="Zero Copy" icon="rocket">
-    No serialization, no memcpy. JS Proxy objects read/write WASM memory directly.
-    `obj.x` reads from `wasm.memory`, not from a JS copy.
-  </Card>
-  <Card title="Lazy Materialization" icon="magnifier">
-    A 10MB object tree in WASM memory costs zero JS heap until you read a specific field.
-    Only the fields you touch are decoded.
-  </Card>
-  <Card title="Dynamic Objects" icon="pencil">
-    Objects grow, arrays grow, strings change length. Push, extend, add properties —
-    all in WASM memory with automatic realloc.
-  </Card>
-  <Card title="Multi-Language" icon="translate">
-    Binary layout spec with native implementations per language.
-    Zig, Rust, Go, Python — each reads/writes the same bytes.
-  </Card>
-</CardGrid>
-
-## Quick Example
+JS and WASM share one `WebAssembly.Memory`. zerobuf defines a binary layout (tagged values, strings, arrays, objects) and provides accessor objects on the JS side that read/write directly to WASM linear memory.
 
 ```typescript
 import { zerobuf } from "zerobuf";
 
 const buf = zerobuf(wasm.exports.memory);
-
-// Create object directly in WASM linear memory
 const point = buf.create({ x: 1.0, y: 2.0, label: "origin" });
 
-// Proxy reads/writes WASM memory — no copy
-point.x = 3.14;
-
-// Pass pointer to WASM function
-transform(point.__zerobuf_ptr);
-
-// WASM wrote result in-place — JS reads it back, still zero copy
-console.log(point.x);
+point.x = 3.14;  // writes to WASM memory
+transform(point.__zerobuf_ptr);  // WASM reads the same bytes
+console.log(point.x);  // reads WASM's output
 ```
+
+## Current state
+
+- JS library with defineProperty accessors (V8-optimized reads, ~8M ops/sec)
+- Zig library with matching binary layout and C ABI exports
+- Dynamic objects: push, extend, grow, add properties
+- All types: null, bool, i32, f64, bigint, string, bytes, array, object
+- Not published to npm — internal use across *mode repos

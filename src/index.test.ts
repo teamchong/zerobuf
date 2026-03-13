@@ -359,11 +359,11 @@ describe("zerobuf", () => {
     });
   });
 
-  describe("materialize", () => {
-    it("materializes object into plain JS object", () => {
+  describe("toJS", () => {
+    it("converts object into plain JS object", () => {
       const buf = zerobuf(mem());
       const obj = buf.create({ x: 1, name: "alice", active: true });
-      const snap = (obj as any).materialize();
+      const snap = (obj as any).toJS();
 
       // snap is a plain JS object, not a Proxy
       expect(snap.x).toBe(1);
@@ -378,7 +378,7 @@ describe("zerobuf", () => {
         user: { name: "alice", scores: [95, 87, 92] },
         tags: ["admin", "active"],
       });
-      const snap = (obj as any).materialize();
+      const snap = (obj as any).toJS();
 
       expect(snap.user.name).toBe("alice");
       expect(snap.user.scores).toEqual([95, 87, 92]);
@@ -391,7 +391,7 @@ describe("zerobuf", () => {
       const buf = zerobuf(mem());
       const obj = buf.create({ items: [1, 2, 3] });
       const arr = obj.items as any;
-      const snap = arr.materialize();
+      const snap = arr.toJS();
 
       expect(snap).toEqual([1, 2, 3]);
       expect(Array.isArray(snap)).toBe(true);
@@ -400,7 +400,7 @@ describe("zerobuf", () => {
     it("materialized object is decoupled from WASM memory", () => {
       const buf = zerobuf(mem());
       const obj = buf.create({ x: 1 });
-      const snap = (obj as any).materialize();
+      const snap = (obj as any).toJS();
 
       // Mutate the proxy (writes to WASM memory)
       obj.x = 99;
@@ -413,7 +413,7 @@ describe("zerobuf", () => {
     it("is efficient for hot loops", () => {
       const buf = zerobuf(mem());
       const obj = buf.create({ x: 3.14, y: 2.71 });
-      const snap = (obj as any).materialize();
+      const snap = (obj as any).toJS();
 
       // Simulate hot loop — snap.x is a plain JS property, no Proxy overhead
       let sum = 0;

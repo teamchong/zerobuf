@@ -148,7 +148,7 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
         return () => arrayPop(arena, handlePtr);
       }
 
-      if (prop === "materialize") {
+      if (prop === "toJS") {
         return () => materializeArray(arena, handlePtr);
       }
 
@@ -195,7 +195,7 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
           return index < arena.readU32(deref(arena, handlePtr) + 4);
         }
       }
-      return prop === "length" || prop === "push" || prop === "pop" || prop === "materialize";
+      return prop === "length" || prop === "push" || prop === "pop" || prop === "toJS";
     },
 
     ownKeys() {
@@ -217,63 +217,85 @@ export function createArrayProxy(arena: Arena, handlePtr: number): unknown[] {
   return new Proxy([] as unknown[], handler);
 }
 
-// ---------- Object Proxy ----------
+// ---------- Object Accessor ----------
 
-/** Create a Proxy for an object in WASM memory. */
-export function createObjectProxy(arena: Arena, handlePtr: number): Record<string, unknown> {
-  const handler: ProxyHandler<Record<string, unknown>> = {
-    get(_target, prop) {
-      if (prop === "__zerobuf_ptr") return handlePtr;
-      if (prop === "__zerobuf_arena") return arena;
-
-      if (prop === "materialize") {
-        return () => materializeObject(arena, handlePtr);
-      }
-
-      if (typeof prop !== "string") return undefined;
-
-      const dataPtr = deref(arena, handlePtr);
-      const entry = findEntry(arena, dataPtr, prop);
-      if (entry === -1) return undefined;
-      return readValue(arena, entry + 8);
+/**
+ * Define a get/set accessor on `target` for a known object entry.
+ * The entry index is captured in the closure — no findEntry scan on read/write.
+ */
+function defineAccessor(
+  target: Record<string, unknown>,
+  arena: Arena,
+  handlePtr: number,
+  key: string,
+  entryIndex: number,
+): void {
+  Object.defineProperty(target, key, {
+    get() {
+      const dp = deref(arena, handlePtr);
+      return readValue(arena, dp + OBJECT_HEADER + entryIndex * OBJECT_ENTRY + 8);
     },
+    set(v: unknown) {
+      const dp = deref(arena, handlePtr);
+      writeVal(arena, dp + OBJECT_HEADER + entryIndex * OBJECT_ENTRY + 8, v);
+    },
+    enumerable: true,
+    configurable: true,
+  });
+}
 
-    set(_target, prop, value) {
+/**
+ * Create an accessor-backed object for WASM memory.
+ *
+ * Uses Object.defineProperty for all known keys — V8 can optimize these
+ * with hidden classes and inline caching (unlike Proxy get traps).
+ * A thin Proxy wrapper (no `get` trap) intercepts `set` for new key addition.
+ */
+export function createObjectProxy(arena: Arena, handlePtr: number): Record<string, unknown> {
+  const target = Object.create(null) as Record<string, unknown>;
+
+  // Non-enumerable internal properties
+  Object.defineProperty(target, "__zerobuf_ptr", { value: handlePtr });
+  Object.defineProperty(target, "__zerobuf_arena", { value: arena });
+  Object.defineProperty(target, "toJS", {
+    value: () => materializeObject(arena, handlePtr),
+  });
+
+  // Define accessors for all current keys (index captured — no linear scan)
+  const dataPtr = deref(arena, handlePtr);
+  const count = arena.readU32(dataPtr + 4);
+  for (let i = 0; i < count; i++) {
+    const entryOffset = dataPtr + OBJECT_HEADER + i * OBJECT_ENTRY;
+    const keyPtr = arena.readU32(entryOffset);
+    const keyLen = arena.readU32(entryOffset + 4);
+    const key = decoder.decode(new Uint8Array(arena.memory.buffer, keyPtr, keyLen));
+    defineAccessor(target, arena, handlePtr, key, i);
+  }
+
+  // Proxy only for new-key interception and delete prevention — no get trap
+  return new Proxy(target, {
+    set(target, prop, value) {
       if (typeof prop !== "string") return false;
 
-      const dataPtr = deref(arena, handlePtr);
-      const entry = findEntry(arena, dataPtr, prop);
-      if (entry !== -1) {
-        writeVal(arena, entry + 8, value);
+      // Existing key — delegate to defineProperty setter (no findEntry)
+      const desc = Object.getOwnPropertyDescriptor(target, prop);
+      if (desc?.set) {
+        desc.set.call(target, value);
         return true;
       }
 
+      // New key — write to WASM, then define accessor
+      const dp = deref(arena, handlePtr);
+      const idx = arena.readU32(dp + 4); // current count = new entry index
       objectAdd(arena, handlePtr, prop, value);
+      defineAccessor(target, arena, handlePtr, prop, idx);
       return true;
-    },
-
-    has(_target, prop) {
-      if (typeof prop !== "string") return false;
-      return findEntry(arena, deref(arena, handlePtr), prop) !== -1;
-    },
-
-    ownKeys() {
-      return objectKeys(arena, deref(arena, handlePtr));
-    },
-
-    getOwnPropertyDescriptor(_target, prop) {
-      if (typeof prop === "string" && findEntry(arena, deref(arena, handlePtr), prop) !== -1) {
-        return { configurable: true, enumerable: true, writable: true };
-      }
-      return undefined;
     },
 
     deleteProperty() {
       return false;
     },
-  };
-
-  return new Proxy({} as Record<string, unknown>, handler);
+  });
 }
 
 // ---------- Internal: array growth ----------

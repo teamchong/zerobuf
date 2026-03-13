@@ -79,12 +79,12 @@ describe("array", () => {
   });
 });
 
-describe("materialize", () => {
+describe("toJS", () => {
   const buf = zerobuf(mem(4));
 
   bench("materialize small object", () => {
     const obj = buf.create({ x: 1, y: 2, name: "test" });
-    (obj as any).materialize();
+    (obj as any).toJS();
   });
 
   bench("materialize nested structure", () => {
@@ -92,11 +92,11 @@ describe("materialize", () => {
       user: { name: "alice", scores: [95, 87, 92] },
       tags: ["admin", "active"],
     });
-    (obj as any).materialize();
+    (obj as any).toJS();
   });
 
   const hot = buf.create({ x: 3.14, y: 2.71 });
-  const snap = (hot as any).materialize();
+  const snap = (hot as any).toJS();
 
   bench("hot loop: proxy read (baseline)", () => {
     void hot.x;

@@ -1,8 +1,8 @@
-import { Arena } from "./arena.js";
+import { Arena, type ArenaOptions } from "./arena.js";
 import { allocObject } from "./encode.js";
 import { readValue, createObjectProxy, createArrayProxy } from "./decode.js";
 
-export { Arena } from "./arena.js";
+export { Arena, type ArenaOptions } from "./arena.js";
 export { Tag, VALUE_SLOT, STRING_HEADER, ARRAY_HEADER, OBJECT_HEADER, OBJECT_ENTRY } from "./types.js";
 export { writeValue, allocString, allocArray, allocObject } from "./encode.js";
 export { readValue, readValueEager, readString, createObjectProxy, createArrayProxy, materializeObject, materializeArray } from "./decode.js";
@@ -44,9 +44,10 @@ export interface ZeroBuf {
  * @param memory - The WASM Memory to use as backing store
  * @param startOffset - Byte offset to start allocating from (default 0).
  *   Set this past any WASM static data / stack to avoid clobbering.
+ * @param options - Arena options (maxPages, etc.)
  */
-export function zerobuf(memory: WebAssembly.Memory, startOffset = 0): ZeroBuf {
-  const arena = new Arena(memory, startOffset);
+export function zerobuf(memory: WebAssembly.Memory, startOffset = 0, options?: ArenaOptions): ZeroBuf {
+  const arena = new Arena(memory, startOffset, options);
 
   return {
     get arena() {

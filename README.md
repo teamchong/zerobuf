@@ -149,6 +149,36 @@ This is why zero-copy sharing works without locks, atomics, or synchronization. 
 
 zerobuf targets the first and third scenarios. If you need multi-threaded shared WASM memory, you need Atomics — that's a different problem.
 
+## Memory growth
+
+WASM linear memory starts small and grows on demand. Each `memory.grow()` is expensive — it detaches the `ArrayBuffer`, invalidating all TypedArray views. zerobuf handles this correctly:
+
+**Doubling strategy**: When a grow is needed, zerobuf doubles the current memory size (or allocates the exact amount needed, whichever is larger). This means O(log n) grows total instead of O(n) for incremental grows.
+
+```
+Alloc 1KB   → memory stays at 64KB  (fits)
+Alloc 60KB  → memory stays at 64KB  (fits)
+Alloc 70KB  → memory grows to 128KB (doubled from 64KB)
+Alloc 200KB → memory grows to 256KB (doubled from 128KB)
+...
+```
+
+**4GB hard limit**: WASM linear memory maxes out at 65536 pages = 4GB. When you hit it, zerobuf throws a `RangeError` with a clear message — not silent corruption.
+
+**Configurable cap**: Set `maxPages` to limit memory usage below 4GB:
+
+```typescript
+// Limit to 128MB (2048 pages × 64KB)
+const buf = zerobuf(wasmMemory, 0, { maxPages: 2048 });
+
+// Throws RangeError when exceeded
+buf.create({ data: hugePayload }); // "zerobuf: out of memory..."
+```
+
+**View caching**: DataView is cached and only recreated when the buffer detaches (after a grow). No allocation overhead on every read/write.
+
+**What happens at 4GB**: You get a `RangeError`. The arena tracks remaining capacity via `arena.remaining`. Plan accordingly — if you're approaching the limit, `.materialize()` what you need and release the zerobuf instance.
+
 ## Comparison
 
 | | wasm-bindgen | AssemblyScript | Emscripten | zerobuf |

@@ -357,8 +357,66 @@ describe("zerobuf", () => {
       // Force memory growth
       memory.grow(1);
 
-      // Proxy still reads correctly (DataView recreated on access)
+      // Proxy still reads correctly (cached DataView invalidated on buffer change)
       expect(obj.value).toBe(123);
+    });
+
+    it("auto-grows with doubling strategy", () => {
+      const memory = mem(1); // 64KB = 1 page
+      const buf = zerobuf(memory);
+
+      // Allocate more than 1 page worth of data
+      const bigString = "x".repeat(70000); // > 64KB, must grow
+      const obj = buf.create({ a: bigString });
+
+      // Memory should have doubled (1 page → 2+ pages)
+      expect(memory.buffer.byteLength).toBeGreaterThan(65536);
+      expect(obj.a).toBe(bigString);
+    });
+
+    it("throws on exceeding maxPages", () => {
+      const memory = mem(1);
+      const buf = zerobuf(memory, 0, { maxPages: 2 }); // max 128KB
+
+      // First alloc fits
+      buf.create({ a: "x".repeat(50000) });
+
+      // Second alloc should exceed 2 pages
+      expect(() => {
+        buf.create({ b: "y".repeat(100000) });
+      }).toThrow(/out of memory/);
+    });
+
+    it("throws with descriptive error at 4GB limit", () => {
+      const memory = mem(1);
+      // Set artificially low maxPages to test the error path
+      const buf = zerobuf(memory, 0, { maxPages: 1 });
+
+      expect(() => {
+        buf.create({ data: "x".repeat(70000) }); // > 64KB = 1 page
+      }).toThrow(/out of memory/);
+    });
+
+    it("reports remaining capacity", () => {
+      const memory = mem(1);
+      const buf = zerobuf(memory, 0, { maxPages: 10 });
+
+      const before = buf.arena.remaining;
+      buf.create({ x: 1 });
+      const after = buf.arena.remaining;
+
+      expect(after).toBeLessThan(before);
+      expect(buf.arena.pages).toBe(1); // no grow needed for small object
+    });
+
+    it("memory.grow(-1) failure throws", () => {
+      // WebAssembly.Memory with explicit max prevents grow beyond it
+      const memory = new WebAssembly.Memory({ initial: 1, maximum: 1 });
+      const buf = zerobuf(memory);
+
+      expect(() => {
+        buf.create({ data: "x".repeat(70000) });
+      }).toThrow();
     });
   });
 });

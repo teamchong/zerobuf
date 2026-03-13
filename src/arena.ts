@@ -1,17 +1,37 @@
 /**
  * Arena allocator over WebAssembly.Memory.
  *
- * Bump allocator with alignment support. Grows WASM memory when needed.
- * No free — arena is append-only. For realloc, we allocate new and abandon old
- * (fragmentation is acceptable for the use case).
+ * Bump allocator with alignment support. Grows WASM memory using a
+ * doubling strategy to amortize grow costs. Each memory.grow() detaches
+ * the ArrayBuffer, so we cache the DataView and invalidate on grow.
+ *
+ * No free — arena is append-only. For realloc, we allocate new and abandon
+ * old (fragmentation is acceptable for the use case).
  */
+
+/** WASM memory max: 65536 pages × 64KB = 4GB */
+const MAX_PAGES = 65536;
+const PAGE_SIZE = 65536; // 64KB
+
+export interface ArenaOptions {
+  /**
+   * Maximum number of WASM pages to allow (default: 65536 = 4GB).
+   * Set lower to bound memory usage.
+   */
+  maxPages?: number;
+}
+
 export class Arena {
   private _memory: WebAssembly.Memory;
   private _offset: number;
+  private _maxPages: number;
+  private _view: DataView | null = null;
+  private _currentBuffer: ArrayBuffer | null = null;
 
-  constructor(memory: WebAssembly.Memory, startOffset = 0) {
+  constructor(memory: WebAssembly.Memory, startOffset = 0, options?: ArenaOptions) {
     this._memory = memory;
     this._offset = startOffset;
+    this._maxPages = options?.maxPages ?? MAX_PAGES;
   }
 
   get memory(): WebAssembly.Memory {
@@ -26,6 +46,21 @@ export class Arena {
     return this._memory.buffer;
   }
 
+  /** Current memory size in bytes */
+  get size(): number {
+    return this._memory.buffer.byteLength;
+  }
+
+  /** Current memory size in pages */
+  get pages(): number {
+    return this._memory.buffer.byteLength / PAGE_SIZE;
+  }
+
+  /** Bytes remaining before hitting max */
+  get remaining(): number {
+    return this._maxPages * PAGE_SIZE - this._offset;
+  }
+
   /** Allocate `bytes` with given alignment. Returns byte offset in memory. */
   alloc(bytes: number, align = 4): number {
     // Align up
@@ -37,8 +72,7 @@ export class Arena {
     const needed = this._offset;
     const available = this._memory.buffer.byteLength;
     if (needed > available) {
-      const pages = Math.ceil((needed - available) / 65536);
-      this._memory.grow(pages);
+      this._grow(needed);
     }
 
     return ptr;
@@ -51,53 +85,98 @@ export class Arena {
     return ptr;
   }
 
-  /** DataView over current buffer (recreated on each call since buffer can detach on grow) */
-  view(): DataView {
-    return new DataView(this._memory.buffer);
+  /**
+   * Grow memory to fit at least `needed` bytes.
+   *
+   * Strategy: double current size, but at least enough for `needed`.
+   * This amortizes grow cost — each grow() detaches the ArrayBuffer
+   * and invalidates all TypedArray views. Doubling means O(log n) grows
+   * total instead of O(n).
+   */
+  private _grow(needed: number): void {
+    const current = this._memory.buffer.byteLength;
+
+    // Double, or the exact amount needed, whichever is larger
+    const target = Math.max(needed, current * 2);
+    const targetPages = Math.ceil(target / PAGE_SIZE);
+    const currentPages = current / PAGE_SIZE;
+    let newPages = targetPages - currentPages;
+
+    if (newPages <= 0) return;
+
+    // Clamp to max
+    if (currentPages + newPages > this._maxPages) {
+      newPages = this._maxPages - currentPages;
+      if (newPages <= 0) {
+        throw new RangeError(
+          `zerobuf: out of memory. Need ${needed} bytes, max is ${this._maxPages * PAGE_SIZE} bytes (${this._maxPages} pages). ` +
+            `Set maxPages in ArenaOptions to increase the limit, or reduce allocations.`,
+        );
+      }
+      // Check if clamped growth is enough
+      if ((currentPages + newPages) * PAGE_SIZE < needed) {
+        throw new RangeError(
+          `zerobuf: out of memory. Need ${needed} bytes, max is ${this._maxPages * PAGE_SIZE} bytes (${this._maxPages} pages).`,
+        );
+      }
+    }
+
+    const result = this._memory.grow(newPages);
+    if (result === -1) {
+      throw new RangeError(
+        `zerobuf: memory.grow(${newPages}) failed. Current: ${currentPages} pages, requested: ${newPages} additional pages.`,
+      );
+    }
+
+    // Invalidate cached view — buffer is detached after grow
+    this._view = null;
+    this._currentBuffer = null;
   }
 
-  /** Uint8Array over current buffer */
-  bytes(): Uint8Array {
-    return new Uint8Array(this._memory.buffer);
+  /**
+   * Cached DataView — avoids creating a new DataView on every read/write.
+   * Invalidated automatically when memory grows (buffer detaches).
+   */
+  private _getView(): DataView {
+    const buf = this._memory.buffer;
+    if (this._view === null || this._currentBuffer !== buf) {
+      this._view = new DataView(buf);
+      this._currentBuffer = buf;
+    }
+    return this._view;
   }
 
-  /** Read u32 at offset */
+  // --- Read/write primitives (use cached DataView) ---
+
   readU32(offset: number): number {
-    return this.view().getUint32(offset, true);
+    return this._getView().getUint32(offset, true);
   }
 
-  /** Write u32 at offset */
   writeU32(offset: number, value: number): void {
-    this.view().setUint32(offset, value, true);
+    this._getView().setUint32(offset, value, true);
   }
 
-  /** Read f64 at offset */
   readF64(offset: number): number {
-    return this.view().getFloat64(offset, true);
+    return this._getView().getFloat64(offset, true);
   }
 
-  /** Write f64 at offset */
   writeF64(offset: number, value: number): void {
-    this.view().setFloat64(offset, value, true);
+    this._getView().setFloat64(offset, value, true);
   }
 
-  /** Read i32 at offset */
   readI32(offset: number): number {
-    return this.view().getInt32(offset, true);
+    return this._getView().getInt32(offset, true);
   }
 
-  /** Write i32 at offset */
   writeI32(offset: number, value: number): void {
-    this.view().setInt32(offset, value, true);
+    this._getView().setInt32(offset, value, true);
   }
 
-  /** Read u8 at offset */
   readU8(offset: number): number {
-    return this.view().getUint8(offset);
+    return this._getView().getUint8(offset);
   }
 
-  /** Write u8 at offset */
   writeU8(offset: number, value: number): void {
-    this.view().setUint8(offset, value);
+    this._getView().setUint8(offset, value);
   }
 }

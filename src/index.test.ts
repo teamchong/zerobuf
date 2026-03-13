@@ -47,6 +47,82 @@ describe("zerobuf", () => {
       expect(obj.pi).toBeCloseTo(Math.PI);
       expect(obj.e).toBeCloseTo(Math.E);
     });
+
+    it("reads and writes bigint", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ big: 9007199254740993n, neg: -9007199254740993n });
+      expect(obj.big).toBe(9007199254740993n);
+      expect(obj.neg).toBe(-9007199254740993n);
+    });
+
+    it("handles bigint at i64 boundaries", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({
+        max: 9223372036854775807n,
+        min: -9223372036854775808n,
+        zero: 0n,
+      });
+      expect(obj.max).toBe(9223372036854775807n);
+      expect(obj.min).toBe(-9223372036854775808n);
+      expect(obj.zero).toBe(0n);
+    });
+
+    it("reads and writes Uint8Array", () => {
+      const buf = zerobuf(mem());
+      const data = new Uint8Array([1, 2, 3, 4, 5]);
+      const obj = buf.create({ payload: data });
+      const result = obj.payload as Uint8Array;
+      expect(result).toBeInstanceOf(Uint8Array);
+      expect(result.length).toBe(5);
+      expect([...result]).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it("handles empty Uint8Array", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ empty: new Uint8Array(0) });
+      const result = obj.empty as Uint8Array;
+      expect(result).toBeInstanceOf(Uint8Array);
+      expect(result.length).toBe(0);
+    });
+
+    it("handles large Uint8Array", () => {
+      const buf = zerobuf(mem());
+      const data = new Uint8Array(10000);
+      for (let i = 0; i < data.length; i++) data[i] = i & 0xff;
+      const obj = buf.create({ blob: data });
+      const result = obj.blob as Uint8Array;
+      expect(result.length).toBe(10000);
+      expect(result[0]).toBe(0);
+      expect(result[255]).toBe(255);
+      expect(result[256]).toBe(0);
+    });
+
+    it("stores Date as f64 epoch ms", () => {
+      const buf = zerobuf(mem());
+      const date = new Date("2025-01-01T00:00:00Z");
+      const obj = buf.create({ created: date });
+      expect(obj.created).toBe(date.getTime());
+    });
+
+    it("handles NaN and Infinity", () => {
+      const buf = zerobuf(mem());
+      const obj = buf.create({ nan: NaN, inf: Infinity, ninf: -Infinity });
+      expect(Number.isNaN(obj.nan as number)).toBe(true);
+      expect(obj.inf).toBe(Infinity);
+      expect(obj.ninf).toBe(-Infinity);
+    });
+
+    it("handles mixed types in arrays including bigint and bytes", () => {
+      const buf = zerobuf(mem());
+      const bytes = new Uint8Array([0xde, 0xad]);
+      const obj = buf.create({ items: [42n, bytes, "hello", 3.14] });
+      const arr = obj.items as unknown[];
+      expect(arr[0]).toBe(42n);
+      expect(arr[1]).toBeInstanceOf(Uint8Array);
+      expect([...(arr[1] as Uint8Array)]).toEqual([0xde, 0xad]);
+      expect(arr[2]).toBe("hello");
+      expect(arr[3]).toBeCloseTo(3.14);
+    });
   });
 
   describe("objects", () => {

@@ -1,0 +1,65 @@
+---
+title: With Durable Objects
+description: Using zerobuf inside Cloudflare Durable Objects that run WASM.
+---
+
+## Overview
+
+Each Durable Object has its own WASM instance with its own `WebAssembly.Memory`. zerobuf wraps that memory, giving you structured zero-copy access to WASM data.
+
+## Pattern
+
+```typescript
+import { DurableObject } from "cloudflare:workers";
+import { zerobuf, type ZeroBuf } from "zerobuf";
+
+export class FragmentDO extends DurableObject<Env> {
+  private buf!: ZeroBuf;
+  private wasmExports!: WasmExports;
+
+  private async ensureInitialized() {
+    if (this.buf) return;
+    const instance = await WebAssembly.instantiate(wasmModule);
+    this.wasmExports = instance.exports as WasmExports;
+    this.buf = zerobuf(
+      this.wasmExports.memory,
+      this.wasmExports.__heap_base.value,
+    );
+  }
+
+  // Public method = RPC endpoint
+  async scan(request: ScanRequest): Promise<ScanResult> {
+    await this.ensureInitialized();
+
+    // WASM computes, writes result at a known pointer
+    this.wasmExports.executeScan(request.ptr);
+    const resultPtr = this.wasmExports.getResultPtr();
+
+    // Wrap as Proxy — lazy, zero copy
+    const result = this.buf.wrapObject(resultPtr);
+
+    // Materialize before returning over RPC
+    // (RPC serializes, so we need a plain JS object)
+    return result.materialize() as ScanResult;
+  }
+}
+```
+
+## Key Points
+
+**One zerobuf per DO instance.** Each DO has its own WASM memory. Create the zerobuf instance once in `ensureInitialized()`.
+
+**Materialize before RPC.** zerobuf Proxy objects reference WASM memory via absolute pointers. When you return data over DO RPC, call `.materialize()` to snapshot into a plain JS object that can be serialized.
+
+**Arena lifecycle.** WASM memory persists as long as the DO is alive (until hibernation evicts it). Use `arena.save()`/`arena.restore()` (planned) for per-request cleanup without resetting the entire heap.
+
+**No race conditions.** JS and WASM on the same DO never run concurrently — each RPC call runs to completion before the next one starts.
+
+## When to Use zerobuf vs Raw Buffers
+
+| Data type | Use |
+|---|---|
+| Query results, metadata, configs | zerobuf — structured, lazy access |
+| Typed columns (Float64Array, Int64) | Raw typed buffers — tighter packing, SIMD-friendly |
+| Strings, nested objects | zerobuf — handles encoding, growth |
+| Hot compute paths | Raw buffers for input, zerobuf for output |

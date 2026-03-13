@@ -1,23 +1,26 @@
 {
   "name": "zerobuf",
-  "version": "0.0.1",
-  "description": "Zero-copy columnar access to WASM linear memory via TypeScript Proxy objects",
+  "version": "0.1.0",
+  "description": "Zero-copy JS/WASM data exchange via shared memory",
   "type": "module",
+  "packageManager": "pnpm@10.21.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
     "build": "tsc",
-    "test": "vitest",
-    "check": "tsc --noEmit"
+    "test": "vitest run",
+    "bench": "vitest bench",
+    "check": "tsc --noEmit",
+    "test:zig": "cd zig && zig build test"
   },
-  "keywords": ["wasm", "columnar", "zero-copy", "proxy", "memory"],
+  "keywords": ["wasm", "zero-copy", "proxy", "webassembly", "shared-memory"],
   "license": "MIT",
   "devDependencies": {
     "typescript": "^5.7.0",

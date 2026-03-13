@@ -1,0 +1,96 @@
+---
+title: With Zig
+description: Use zerobuf.zig to read/write shared objects from WASM Zig code.
+---
+
+## Overview
+
+The Zig-side library (`zerobuf.zig`) reads and writes the same binary layout as the JS-side. Both sides share one `WebAssembly.Memory` — no serialization, no copy.
+
+## Setup
+
+Copy `zerobuf.zig` into your Zig WASM project, or add it as a dependency in `build.zig.zon`.
+
+### Option A: Copy the file
+
+```bash
+cp path/to/zerobuf/zig/zerobuf.zig your-wasm-project/src/
+```
+
+### Option B: Zig package dependency
+
+```zig
+// build.zig.zon
+.dependencies = .{
+    .zerobuf = .{
+        .url = "https://github.com/teamchong/zerobuf/archive/main.tar.gz",
+    },
+},
+```
+
+## Reading Objects from JS
+
+JS creates an object with `buf.create({ x: 1.0, y: 2.0 })` and passes the handle pointer to WASM:
+
+```zig
+const zb = @import("zerobuf");
+
+// Exported function — JS calls this with the handle pointer
+export fn transform(handle_ptr: u32) void {
+    // Get a slice of WASM linear memory
+    const mem = getMemorySlice();
+
+    const obj = zb.ObjectReader.init(mem, handle_ptr);
+    const x = obj.getF64("x") orelse return;
+    const y = obj.getF64("y") orelse return;
+
+    // Write result back — JS sees it immediately
+    var writer = zb.ObjectWriter.init(mem, handle_ptr);
+    _ = writer.setF64("x", x * 2.0);
+    _ = writer.setF64("y", y * 2.0);
+}
+```
+
+## Reading Arrays
+
+```zig
+const arr = zb.ArrayReader.init(mem, handle_ptr);
+const len = arr.len();
+
+for (0..len) |i| {
+    const val = arr.get(@intCast(i));
+    switch (val) {
+        .f64 => |v| processFloat(v),
+        .i32 => |v| processInt(v),
+        .string => |v| processString(v),
+        else => {},
+    }
+}
+```
+
+## Writing Tagged Values
+
+```zig
+// Write directly into a 16-byte value slot
+zb.writeF64Val(mem, offset, 3.14);
+zb.writeI32Val(mem, offset, 42);
+zb.writeBool(mem, offset, true);
+zb.writeNull(mem, offset);
+
+// Reference types (string/array/object) need their header pointer
+zb.writeStringRef(mem, offset, string_header_ptr);
+zb.writeArrayRef(mem, offset, array_handle_ptr);
+zb.writeObjectRef(mem, offset, object_handle_ptr);
+```
+
+## Layout Constants
+
+These match `src/types.ts` exactly:
+
+| Constant | Value | Description |
+|---|---|---|
+| `VALUE_SLOT` | 16 | Size of a tagged value slot |
+| `STRING_HEADER` | 4 | String: `[byteLength: u32]` then UTF-8 bytes |
+| `ARRAY_HEADER` | 8 | Array: `[capacity: u32, length: u32]` then value slots |
+| `OBJECT_HEADER` | 8 | Object: `[capacity: u32, count: u32]` then entries |
+| `OBJECT_ENTRY` | 24 | Entry: `[keyPtr: u32, keyLen: u32, value: VALUE_SLOT]` |

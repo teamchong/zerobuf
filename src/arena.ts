@@ -179,4 +179,12 @@ export class Arena {
   writeU8(offset: number, value: number): void {
     this._getView().setUint8(offset, value);
   }
+
+  readI64(offset: number): bigint {
+    return this._getView().getBigInt64(offset, true);
+  }
+
+  writeI64(offset: number, value: bigint): void {
+    this._getView().setBigInt64(offset, value, true);
+  }
 }

@@ -25,8 +25,12 @@ export function readValue(arena: Arena, offset: number): unknown {
       return arena.readI32(offset + 4);
     case Tag.F64:
       return arena.readF64(offset + 8);
+    case Tag.BigInt:
+      return arena.readI64(offset + 8);
     case Tag.String:
       return readString(arena, arena.readU32(offset + 4));
+    case Tag.Bytes:
+      return readBytes(arena, arena.readU32(offset + 4));
     case Tag.Array:
       return createArrayProxy(arena, arena.readU32(offset + 4));
     case Tag.Object:
@@ -53,8 +57,12 @@ export function readValueEager(arena: Arena, offset: number): unknown {
       return arena.readI32(offset + 4);
     case Tag.F64:
       return arena.readF64(offset + 8);
+    case Tag.BigInt:
+      return arena.readI64(offset + 8);
     case Tag.String:
       return readString(arena, arena.readU32(offset + 4));
+    case Tag.Bytes:
+      return readBytes(arena, arena.readU32(offset + 4));
     case Tag.Array:
       return materializeArray(arena, arena.readU32(offset + 4));
     case Tag.Object:
@@ -95,6 +103,12 @@ export function readString(arena: Arena, ptr: number): string {
   const byteLen = arena.readU32(ptr);
   const bytes = new Uint8Array(arena.memory.buffer, ptr + STRING_HEADER, byteLen);
   return decoder.decode(bytes);
+}
+
+/** Read a byte buffer from its header pointer. Returns a copy (decoupled from WASM memory). */
+export function readBytes(arena: Arena, ptr: number): Uint8Array {
+  const byteLen = arena.readU32(ptr);
+  return new Uint8Array(arena.memory.buffer, ptr + STRING_HEADER, byteLen).slice();
 }
 
 /**

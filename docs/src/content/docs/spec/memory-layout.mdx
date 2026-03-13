@@ -1,0 +1,129 @@
+---
+title: Memory Layout Spec
+description: The binary format that both JS and WASM agree on.
+---
+
+## Overview
+
+zerobuf defines a binary layout in `WebAssembly.Memory` that any language can read/write. This page is the spec — if you're implementing a binding for a new language, this is all you need.
+
+All values are **little-endian**. All offsets are byte offsets from the start of WASM linear memory.
+
+## Tagged Value Slot (16 bytes)
+
+Every value occupies a fixed 16-byte slot:
+
+```
+Offset  Size  Field
+0       1     tag (enum, see below)
+1-3     3     padding (unused)
+4       4     payload A (i32/bool/ptr)
+8       8     payload B (f64)
+```
+
+The tag determines which payload fields are used:
+
+| Tag | Value | Payload A (offset +4) | Payload B (offset +8) |
+|---|---|---|---|
+| `Null` | 0 | unused | unused |
+| `Bool` | 1 | 0 or 1 (u32) | unused |
+| `I32` | 2 | value (i32) | unused |
+| `F64` | 3 | unused | value (f64) |
+| `String` | 4 | string header ptr (u32) | unused |
+| `Array` | 5 | array handle ptr (u32) | unused |
+| `Object` | 6 | object handle ptr (u32) | unused |
+
+## String
+
+```
+Offset  Size       Field
+0       4          byteLength (u32) — UTF-8 byte count
+4       byteLength UTF-8 bytes (no null terminator)
+```
+
+Strings are immutable once written. To change a string property, allocate a new string and update the pointer in the value slot.
+
+## Array
+
+Arrays use **handle indirection** — a 4-byte cell holds the current data pointer. When the array grows beyond capacity, a new data block is allocated and the handle is updated. Proxies capture the handle address, so they survive realloc.
+
+### Handle (4 bytes)
+
+```
+Offset  Size  Field
+0       4     data pointer (u32) — points to array data
+```
+
+### Data Block
+
+```
+Offset               Size        Field
+0                    4           capacity (u32)
+4                    4           length (u32)
+8                    16 * cap    value slots (VALUE_SLOT each)
+```
+
+Element `i` is at data offset `8 + i * 16`.
+
+### Growth
+
+When `length == capacity`, allocate a new data block with `capacity * 2`, copy existing elements, write the new element, and update the handle to point to the new data. Old data is abandoned (arena is append-only).
+
+## Object
+
+Objects also use handle indirection, same as arrays.
+
+### Handle (4 bytes)
+
+```
+Offset  Size  Field
+0       4     data pointer (u32) — points to object data
+```
+
+### Data Block
+
+```
+Offset               Size         Field
+0                    4            capacity (u32)
+4                    4            count (u32) — number of properties
+8                    24 * cap     entries (OBJECT_ENTRY each)
+```
+
+### Entry (24 bytes)
+
+```
+Offset  Size  Field
+0       4     key pointer (u32) — points to UTF-8 key bytes in memory
+4       4     key byte length (u32)
+8       16    value (VALUE_SLOT — tagged value)
+```
+
+Property lookup is **linear scan** — compare key bytes for each entry. This is O(n) in property count, which is fine for typical object sizes (< 100 properties). Schema mode (planned) will provide O(1) fixed-offset access.
+
+### Growth
+
+Same as arrays: when `count == capacity`, allocate `capacity * 2`, copy entries, append new entry, update handle.
+
+## Arena Allocator
+
+All allocations use a bump allocator over `WebAssembly.Memory`:
+
+- **Alignment**: `offset = (offset + align - 1) & ~(align - 1)` before each alloc
+- **Growth**: doubling strategy — `memory.grow(max(needed, current * 2))`
+- **Max**: 65535 pages (4GB minus 64KB — avoids Chrome unsigned overflow at exactly 4GB)
+- **No free**: arena is append-only. Realloc allocates new and abandons old.
+
+### Shared Arena State (planned)
+
+For Zig/Rust WASM modules that need to allocate zerobuf objects, the arena offset will be stored at a fixed address in memory. Both JS and WASM read/write the same offset — no import call needed.
+
+## Alignment
+
+| Type | Alignment |
+|---|---|
+| Value slot | 4 bytes |
+| String header | 1 byte |
+| String bytes | 1 byte |
+| Array/object data | 4 bytes |
+| Handle | 4 bytes |
+| F64 payload | aligned to offset +8 within the 16-byte slot |

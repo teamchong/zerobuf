@@ -40,9 +40,28 @@ export function writeValue(arena: Arena, offset: number, value: unknown): void {
     return;
   }
 
+  if (typeof value === "bigint") {
+    arena.writeU8(offset, Tag.BigInt);
+    arena.writeI64(offset + 8, value);
+    return;
+  }
+
   if (typeof value === "string") {
     const ptr = allocString(arena, value);
     arena.writeU8(offset, Tag.String);
+    arena.writeU32(offset + 4, ptr);
+    return;
+  }
+
+  if (value instanceof Date) {
+    arena.writeU8(offset, Tag.F64);
+    arena.writeF64(offset + 8, value.getTime());
+    return;
+  }
+
+  if (value instanceof Uint8Array) {
+    const ptr = allocBytes(arena, value);
+    arena.writeU8(offset, Tag.Bytes);
     arena.writeU32(offset + 4, ptr);
     return;
   }
@@ -69,6 +88,14 @@ export function writeValue(arena: Arena, offset: number, value: unknown): void {
     arena.writeU32(offset + 4, handlePtr);
     return;
   }
+}
+
+/** Allocate a byte buffer in the arena. Returns pointer to header. Layout: [byteLength: u32] [bytes...] */
+export function allocBytes(arena: Arena, data: Uint8Array): number {
+  const ptr = arena.alloc(STRING_HEADER + data.byteLength, 4);
+  arena.writeU32(ptr, data.byteLength);
+  new Uint8Array(arena.memory.buffer, ptr + STRING_HEADER, data.byteLength).set(data);
+  return ptr;
 }
 
 /** Allocate a string in the arena. Returns pointer to string header. */

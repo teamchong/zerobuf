@@ -17,6 +17,8 @@ export const enum Tag {
   String = 4,
   Array = 5,
   Object = 6,
+  BigInt = 7,
+  Bytes = 8,
 }
 
 /** Bytes per tagged value slot */

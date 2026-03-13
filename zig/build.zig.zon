@@ -1,0 +1,7 @@
+.{
+    .name = .zerobuf,
+    .version = "0.1.0",
+    .fingerprint = 0xd0d0cc984a8a6f0f,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{""},
+}

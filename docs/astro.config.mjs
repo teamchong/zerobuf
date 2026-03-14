@@ -24,6 +24,7 @@ export default defineConfig({
             { label: "With Workers", slug: "guides/with-workers" },
             { label: "With Durable Objects", slug: "guides/with-durable-objects" },
             { label: "With Zig", slug: "guides/with-zig" },
+            { label: "C ABI (Go, Rust, C)", slug: "guides/c-abi" },
           ],
         },
         {

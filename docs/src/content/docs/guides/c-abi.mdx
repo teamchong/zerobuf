@@ -1,0 +1,209 @@
+---
+title: C ABI (Go, Rust, C, etc.)
+description: Use zerobuf from any language that can call C functions.
+---
+
+## Overview
+
+The Zig library exports 24 C ABI functions prefixed with `zerobuf_`. Any language that can call C functions can read/write zerobuf data — Go (cgo), Rust (extern "C"), C/C++, Python (ctypes/cffi), etc.
+
+You don't need to know Zig. Compile the Zig library to a shared library or static library, then call the exports from your language.
+
+## Building the Library
+
+```bash
+cd zig
+
+# Shared library (.so / .dylib / .dll)
+zig build-lib zerobuf.zig -dynamic -OReleaseFast
+
+# Static library (.a)
+zig build-lib zerobuf.zig -OReleaseFast
+
+# WASM (for browser/worker use alongside JS)
+zig build-lib zerobuf.zig -target wasm32-freestanding -OReleaseFast
+```
+
+## C Header
+
+All functions operate on a memory buffer you provide. No global state.
+
+```c
+#include <stdint.h>
+
+// Tag enum
+// 0=null, 1=bool, 2=i32, 3=f64, 4=string, 5=array, 6=object, 7=bigint, 8=bytes
+
+// Read/write tagged value slots (16 bytes each)
+uint8_t  zerobuf_tag(const uint8_t* mem, uint32_t offset);
+int32_t  zerobuf_read_i32(const uint8_t* mem, uint32_t offset);
+double   zerobuf_read_f64(const uint8_t* mem, uint32_t offset);
+int64_t  zerobuf_read_i64(const uint8_t* mem, uint32_t offset);
+uint32_t zerobuf_read_bool(const uint8_t* mem, uint32_t offset);
+
+void zerobuf_write_i32(uint8_t* mem, uint32_t offset, int32_t value);
+void zerobuf_write_f64(uint8_t* mem, uint32_t offset, double value);
+void zerobuf_write_i64(uint8_t* mem, uint32_t offset, int64_t value);
+void zerobuf_write_bool(uint8_t* mem, uint32_t offset, uint32_t value);
+void zerobuf_write_null(uint8_t* mem, uint32_t offset);
+
+// String/bytes helpers
+uint32_t zerobuf_read_len(const uint8_t* mem, uint32_t header_ptr);
+uint32_t zerobuf_read_data_ptr(uint32_t header_ptr); // returns header_ptr + 4
+
+// Handle indirection (arrays/objects use handles that survive realloc)
+uint32_t zerobuf_deref(const uint8_t* mem, uint32_t handle_ptr);
+
+// Array access
+uint32_t zerobuf_array_len(const uint8_t* mem, uint32_t handle_ptr);
+uint32_t zerobuf_array_element_offset(const uint8_t* mem, uint32_t handle_ptr, uint32_t index);
+
+// Object access
+uint32_t zerobuf_object_count(const uint8_t* mem, uint32_t handle_ptr);
+uint32_t zerobuf_object_find(const uint8_t* mem, uint32_t mem_len,
+                             uint32_t handle_ptr, const uint8_t* key, uint32_t key_len);
+                             // returns value slot offset, or 0xFFFFFFFF if not found
+
+// Object get (returns 0 if key not found)
+double   zerobuf_object_get_f64(const uint8_t* mem, uint32_t mem_len,
+                                uint32_t handle_ptr, const uint8_t* key, uint32_t key_len);
+int32_t  zerobuf_object_get_i32(const uint8_t* mem, uint32_t mem_len,
+                                uint32_t handle_ptr, const uint8_t* key, uint32_t key_len);
+int64_t  zerobuf_object_get_i64(const uint8_t* mem, uint32_t mem_len,
+                                uint32_t handle_ptr, const uint8_t* key, uint32_t key_len);
+uint32_t zerobuf_object_get_string(const uint8_t* mem, uint32_t mem_len,
+                                   uint32_t handle_ptr, const uint8_t* key, uint32_t key_len,
+                                   uint32_t* out_len);
+                                   // returns data pointer, writes length to out_len
+
+// Object set (returns 1 on success, 0 if key not found)
+uint32_t zerobuf_object_set_f64(uint8_t* mem, uint32_t mem_len,
+                                uint32_t handle_ptr, const uint8_t* key, uint32_t key_len, double value);
+uint32_t zerobuf_object_set_i32(uint8_t* mem, uint32_t mem_len,
+                                uint32_t handle_ptr, const uint8_t* key, uint32_t key_len, int32_t value);
+uint32_t zerobuf_object_set_i64(uint8_t* mem, uint32_t mem_len,
+                                uint32_t handle_ptr, const uint8_t* key, uint32_t key_len, int64_t value);
+```
+
+## Go (cgo)
+
+```go
+package main
+
+/*
+#cgo LDFLAGS: -L./zig/zig-out/lib -lzerobuf
+#include <stdint.h>
+
+extern double zerobuf_object_get_f64(const uint8_t* mem, uint32_t mem_len,
+    uint32_t handle_ptr, const uint8_t* key, uint32_t key_len);
+extern uint32_t zerobuf_object_set_f64(uint8_t* mem, uint32_t mem_len,
+    uint32_t handle_ptr, const uint8_t* key, uint32_t key_len, double value);
+extern double zerobuf_read_f64(const uint8_t* mem, uint32_t offset);
+extern void zerobuf_write_f64(uint8_t* mem, uint32_t offset, double value);
+extern uint32_t zerobuf_array_len(const uint8_t* mem, uint32_t handle_ptr);
+extern uint32_t zerobuf_array_element_offset(const uint8_t* mem,
+    uint32_t handle_ptr, uint32_t index);
+*/
+import "C"
+import (
+    "fmt"
+    "unsafe"
+)
+
+func main() {
+    // mem is your shared buffer (e.g. from WebAssembly.Memory or mmap)
+    mem := make([]byte, 4096)
+    memPtr := (*C.uint8_t)(unsafe.Pointer(&mem[0]))
+    memLen := C.uint32_t(len(mem))
+
+    // Assume JS created an object at handle_ptr = 0
+    // Read a property
+    key := []byte("x")
+    val := C.zerobuf_object_get_f64(memPtr, memLen, 0,
+        (*C.uint8_t)(unsafe.Pointer(&key[0])), C.uint32_t(len(key)))
+    fmt.Printf("x = %f\n", float64(val))
+
+    // Write a property
+    C.zerobuf_object_set_f64(memPtr, memLen, 0,
+        (*C.uint8_t)(unsafe.Pointer(&key[0])), C.uint32_t(len(key)),
+        C.double(42.0))
+}
+```
+
+## Rust (extern "C")
+
+```rust
+extern "C" {
+    fn zerobuf_tag(mem: *const u8, offset: u32) -> u8;
+    fn zerobuf_read_f64(mem: *const u8, offset: u32) -> f64;
+    fn zerobuf_write_f64(mem: *mut u8, offset: u32, value: f64);
+    fn zerobuf_read_i32(mem: *const u8, offset: u32) -> i32;
+    fn zerobuf_write_i32(mem: *mut u8, offset: u32, value: i32);
+
+    fn zerobuf_object_get_f64(
+        mem: *const u8, mem_len: u32,
+        handle_ptr: u32, key: *const u8, key_len: u32,
+    ) -> f64;
+    fn zerobuf_object_set_f64(
+        mem: *mut u8, mem_len: u32,
+        handle_ptr: u32, key: *const u8, key_len: u32, value: f64,
+    ) -> u32;
+
+    fn zerobuf_array_len(mem: *const u8, handle_ptr: u32) -> u32;
+    fn zerobuf_array_element_offset(
+        mem: *const u8, handle_ptr: u32, index: u32,
+    ) -> u32;
+}
+
+fn read_point(mem: &[u8], handle_ptr: u32) -> (f64, f64) {
+    unsafe {
+        let x = zerobuf_object_get_f64(
+            mem.as_ptr(), mem.len() as u32,
+            handle_ptr, b"x".as_ptr(), 1,
+        );
+        let y = zerobuf_object_get_f64(
+            mem.as_ptr(), mem.len() as u32,
+            handle_ptr, b"y".as_ptr(), 1,
+        );
+        (x, y)
+    }
+}
+```
+
+Link with: `cargo:rustc-link-lib=zerobuf`
+
+## C
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+
+// Link with -lzerobuf
+extern double zerobuf_object_get_f64(const uint8_t*, uint32_t, uint32_t, const uint8_t*, uint32_t);
+extern uint32_t zerobuf_object_set_f64(uint8_t*, uint32_t, uint32_t, const uint8_t*, uint32_t, double);
+
+int main() {
+    uint8_t mem[4096];
+    memset(mem, 0, sizeof(mem));
+
+    // Assume JS/WASM created an object at handle_ptr
+    uint32_t handle_ptr = 0;
+
+    double x = zerobuf_object_get_f64(mem, sizeof(mem), handle_ptr, (const uint8_t*)"x", 1);
+    printf("x = %f\n", x);
+
+    zerobuf_object_set_f64(mem, sizeof(mem), handle_ptr, (const uint8_t*)"x", 1, 99.0);
+    return 0;
+}
+```
+
+## Key Points
+
+**No allocator in C ABI.** The C exports only read/write existing structures in memory. Allocation (creating new objects, growing arrays) is handled by the JS side or by using the Zig API directly. The C ABI is for reading results that JS/Zig created, and writing values back.
+
+**Memory is just bytes.** The `mem` parameter is a pointer to the start of the buffer (e.g. `WebAssembly.Memory.buffer`, `mmap`, or a plain `malloc`). The `mem_len` parameter is the total buffer size for bounds safety.
+
+**0xFFFFFFFF = not found.** `zerobuf_object_find` returns `0xFFFFFFFF` when a key doesn't exist. The typed getters (`get_f64`, `get_i32`) return `0` when a key isn't found.
+
+**No global state.** Every function takes the memory pointer explicitly. You can have multiple zerobuf regions in the same process.

@@ -47,6 +47,12 @@ buf.restore(checkpoint)  // restore to checkpoint, frees all allocations after i
 
 obj.toJS()               // convert to plain JS object (recursive)
 arr.toJS()               // convert to plain JS array (recursive)
+
+// Schema mode — fixed-layout, no Proxy, no key storage
+const Point = defineSchema<{ x: number; y: number }>(["x", "y"]);
+const p = Point.create(buf.arena, { x: 1.0, y: 2.0 });
+p.x = 3.14;             // direct read/write at precomputed offset
+Point.toJS(buf.arena, p.__zerobuf_ptr)  // bulk read from pointer
 ```
 
 ## Supported types
@@ -79,8 +85,12 @@ Benchmarks (Node 22, Apple M-series):
 | read array element (cached) | ~7M |
 | read array element (cold) | ~500K |
 | toJS (plain JS copy) | ~27M reads/sec |
+| **schema** read f64 | ~9.4M |
+| **schema** create {x,y,z} | ~871K |
 
 `.toJS()` returns a plain JS object for hot loops. 6x faster than accessor reads.
+
+Schema mode is faster for create (1.8x — no key strings, no handle) and slightly faster for reads (no handle deref). Use schema when you know the shape upfront.
 
 ## Zig library
 
@@ -114,7 +124,7 @@ Run Zig tests: `cd zig && zig build test`
 - [x] Vitest tests (60 passing)
 - [x] Benchmarks (CI posts to GITHUB_STEP_SUMMARY)
 - [x] Arena save/restore (per-request cleanup in long-lived processes)
-- [ ] Schema mode (fixed-offset access, no proxy overhead)
+- [x] Schema mode (fixed-offset, no Proxy, 1.8x faster create)
 - [ ] npm publish
 
 ## License

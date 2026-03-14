@@ -1,0 +1,91 @@
+---
+title: Schema Mode
+description: Fixed-layout objects with precomputed offsets — no Proxy, no key storage.
+---
+
+## Overview
+
+Dynamic objects (`buf.create()`) store key strings in memory and use handle indirection. This is flexible — you can add fields at runtime — but it has overhead per read (handle deref + entry index calculation).
+
+Schema mode skips all of that. You declare field names upfront, and each field gets a fixed byte offset: `base + fieldIndex * 16`. No Proxy, no handle, no key strings.
+
+## Usage
+
+```typescript
+import { zerobuf, defineSchema } from "zerobuf";
+
+const buf = zerobuf(new WebAssembly.Memory({ initial: 1 }));
+
+// Define schema once
+const Point = defineSchema<{ x: number; y: number; z: number }>(["x", "y", "z"]);
+
+// Create instances
+const p = Point.create(buf.arena, { x: 1.0, y: 2.0, z: 3.0 });
+p.x = 3.14;           // writes directly at base + 0
+console.log(p.y);     // reads directly at base + 16
+
+// toJS
+const snap = (p as any).toJS();  // { x: 3.14, y: 2.0, z: 3.0 }
+
+// Wrap existing pointer
+const ptr = (p as any).__zerobuf_ptr;
+const p2 = Point.wrap(buf.arena, ptr);  // same data, new accessor
+
+// Bulk read from raw pointer
+const plain = Point.toJS(buf.arena, ptr);
+```
+
+## Memory Layout
+
+Schema objects are flat — just N contiguous 16-byte value slots:
+
+```
+base + 0   [x: value slot (16 bytes)]
+base + 16  [y: value slot (16 bytes)]
+base + 32  [z: value slot (16 bytes)]
+```
+
+Compare to dynamic objects:
+```
+handle (4 bytes) → data pointer
+data: [capacity: 4] [count: 4] [entries...]
+  entry 0: [keyPtr: 4] [keyLen: 4] [value: 16]  // 24 bytes per entry
+  entry 1: ...
+key strings stored separately in arena
+```
+
+Schema saves: 4 bytes handle + 8 bytes header + 8 bytes per field (key ptr/len) + key string bytes.
+
+## Per-Request Pattern
+
+Schema mode pairs well with save/restore for zero-waste request handling:
+
+```typescript
+const Result = defineSchema<{ score: number; label: string }>(["score", "label"]);
+
+async function handleRequest(buf: ZeroBuf, input: Input) {
+  const cp = buf.save();
+
+  const result = Result.create(buf.arena, { score: 0, label: "" });
+  // ... compute ...
+  result.score = computeScore(input);
+  result.label = classify(input);
+
+  const response = (result as any).toJS();
+  buf.restore(cp);  // free everything allocated since save
+  return response;
+}
+```
+
+## When to Use
+
+| Scenario | Use |
+|---|---|
+| Known shape, hot path (query results, coordinates, configs) | Schema mode |
+| Unknown/dynamic shape, need to add fields at runtime | Dynamic mode (`buf.create`) |
+| WASM output with known struct layout | Schema `wrap()` |
+| Ad-hoc data, prototyping | Dynamic mode |
+
+## Not Related to Zod
+
+`defineSchema` takes a plain array of field names. It's not a validation library — no runtime type checking, no zod dependency. The TypeScript generic is for editor autocompletion only.

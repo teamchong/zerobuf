@@ -20,6 +20,7 @@ export default defineConfig({
         {
           label: "Guides",
           items: [
+            { label: "Schema Mode", slug: "guides/schema-mode" },
             { label: "Standalone", slug: "guides/standalone" },
             { label: "With Workers", slug: "guides/with-workers" },
             { label: "With Durable Objects", slug: "guides/with-durable-objects" },

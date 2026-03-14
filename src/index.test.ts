@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { zerobuf } from "./index.js";
+import { zerobuf, defineSchema } from "./index.js";
 
 function mem(pages = 1): WebAssembly.Memory {
   return new WebAssembly.Memory({ initial: pages });
@@ -561,6 +561,106 @@ describe("zerobuf", () => {
 
       buf.restore(cp1); // free a too
       expect(buf.arena.offset).toBe(cp1);
+    });
+  });
+
+  describe("schema mode", () => {
+    it("creates and reads fixed-layout objects", () => {
+      const buf = zerobuf(mem());
+      const Point = defineSchema<{ x: number; y: number; z: number }>(["x", "y", "z"]);
+      const p = Point.create(buf.arena, { x: 1.0, y: 2.0, z: 3.0 });
+      expect(p.x).toBeCloseTo(1.0);
+      expect(p.y).toBeCloseTo(2.0);
+      expect(p.z).toBeCloseTo(3.0);
+    });
+
+    it("writes to schema objects", () => {
+      const buf = zerobuf(mem());
+      const Point = defineSchema<{ x: number; y: number }>(["x", "y"]);
+      const p = Point.create(buf.arena, { x: 1.0, y: 2.0 });
+      p.x = 99.0;
+      expect(p.x).toBeCloseTo(99.0);
+      expect(p.y).toBeCloseTo(2.0);
+    });
+
+    it("handles mixed types", () => {
+      const buf = zerobuf(mem());
+      const User = defineSchema<{ name: string; age: number; active: boolean }>(
+        ["name", "age", "active"],
+      );
+      const u = User.create(buf.arena, { name: "alice", age: 30, active: true });
+      expect(u.name).toBe("alice");
+      expect(u.age).toBe(30);
+      expect(u.active).toBe(true);
+    });
+
+    it("wrap reads existing data", () => {
+      const buf = zerobuf(mem());
+      const Point = defineSchema<{ x: number; y: number }>(["x", "y"]);
+      const p = Point.create(buf.arena, { x: 3.14, y: 2.71 });
+      const ptr = (p as any).__zerobuf_ptr;
+      const wrapped = Point.wrap(buf.arena, ptr);
+      expect(wrapped.x).toBeCloseTo(3.14);
+      expect(wrapped.y).toBeCloseTo(2.71);
+    });
+
+    it("toJS returns plain object", () => {
+      const buf = zerobuf(mem());
+      const Point = defineSchema<{ x: number; y: number }>(["x", "y"]);
+      const p = Point.create(buf.arena, { x: 1.0, y: 2.0 });
+      const snap = (p as any).toJS();
+      expect(snap.x).toBeCloseTo(1.0);
+      expect(snap.y).toBeCloseTo(2.0);
+      expect(snap.__zerobuf_ptr).toBeUndefined();
+    });
+
+    it("schema.toJS reads from raw pointer", () => {
+      const buf = zerobuf(mem());
+      const Point = defineSchema<{ x: number; y: number }>(["x", "y"]);
+      const p = Point.create(buf.arena, { x: 5.0, y: 6.0 });
+      const ptr = (p as any).__zerobuf_ptr;
+      const snap = Point.toJS(buf.arena, ptr);
+      expect(snap.x).toBeCloseTo(5.0);
+      expect(snap.y).toBeCloseTo(6.0);
+    });
+
+    it("Object.keys returns field names", () => {
+      const buf = zerobuf(mem());
+      const S = defineSchema<{ a: number; b: string; c: boolean }>(["a", "b", "c"]);
+      const obj = S.create(buf.arena, { a: 1, b: "hi", c: true });
+      expect(Object.keys(obj)).toEqual(["a", "b", "c"]);
+    });
+
+    it("schema size is fields * 16", () => {
+      const S = defineSchema<{ a: number; b: number; c: number }>(["a", "b", "c"]);
+      expect(S.size).toBe(48);
+    });
+
+    it("works with save/restore", () => {
+      const buf = zerobuf(mem());
+      const Point = defineSchema<{ x: number; y: number }>(["x", "y"]);
+
+      for (let i = 0; i < 100; i++) {
+        const cp = buf.save();
+        const p = Point.create(buf.arena, { x: i, y: i * 2 });
+        const snap = (p as any).toJS();
+        buf.restore(cp);
+        expect(snap.x).toBe(i);
+      }
+
+      expect(buf.arena.offset).toBeLessThan(200);
+    });
+
+    it("no Proxy overhead — direct defineProperty", () => {
+      const buf = zerobuf(mem());
+      const Point = defineSchema<{ x: number; y: number }>(["x", "y"]);
+      const p = Point.create(buf.arena, { x: 1, y: 2 });
+
+      // Verify it's a plain object with defineProperty, not a Proxy
+      const desc = Object.getOwnPropertyDescriptor(p, "x");
+      expect(desc).toBeDefined();
+      expect(typeof desc!.get).toBe("function");
+      expect(typeof desc!.set).toBe("function");
     });
   });
 

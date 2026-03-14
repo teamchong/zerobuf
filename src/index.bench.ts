@@ -1,5 +1,5 @@
 import { bench, describe } from "vitest";
-import { zerobuf } from "./index.js";
+import { zerobuf, defineSchema } from "./index.js";
 
 function mem(pages = 1): WebAssembly.Memory {
   return new WebAssembly.Memory({ initial: pages });
@@ -85,6 +85,28 @@ describe("array", () => {
     const obj = buf.create({ items: [1] });
     const arr = obj.items as unknown[];
     for (let i = 0; i < 10; i++) arr.push(i);
+  });
+});
+
+describe("schema", () => {
+  const buf = zerobuf(mem(4));
+  const Point = defineSchema<{ x: number; y: number; z: number }>(["x", "y", "z"]);
+  const sp = Point.create(buf.arena, { x: 3.14, y: 2.71, z: 1.0 });
+
+  bench("schema read f64", () => {
+    void sp.x;
+  });
+
+  bench("schema write f64", () => {
+    sp.x = 3.14;
+  });
+
+  bench("schema create { x, y, z }", () => {
+    Point.create(buf.arena, { x: 1.0, y: 2.0, z: 3.0 });
+  });
+
+  bench("schema toJS", () => {
+    (sp as any).toJS();
   });
 });
 

@@ -65,12 +65,13 @@ jobs:
       - name: Test
         run: pnpm test
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Publish to npm (OIDC provenance)
+      - name: Publish to npm (OIDC)
         run: npm publish --provenance --access public
 
   create-tag:

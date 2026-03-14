@@ -1,6 +1,6 @@
 {
   "name": "zerobuf",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Structured binary layout over WebAssembly.Memory — zero-copy JS/WASM data exchange",
   "type": "module",
   "packageManager": "pnpm@10.21.0",
@@ -12,7 +12,11 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -21,7 +25,14 @@
     "test:zig": "cd zig && zig build test",
     "prepublishOnly": "pnpm run build"
   },
-  "keywords": ["wasm", "zero-copy", "webassembly", "shared-memory", "binary-layout", "arena"],
+  "keywords": [
+    "wasm",
+    "zero-copy",
+    "webassembly",
+    "shared-memory",
+    "binary-layout",
+    "arena"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/teamchong/zerobuf.git"

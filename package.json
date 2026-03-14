@@ -1,6 +1,6 @@
 {
   "name": "zerobuf",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Structured binary layout over WebAssembly.Memory — zero-copy JS/WASM data exchange",
   "type": "module",
   "packageManager": "pnpm@10.21.0",

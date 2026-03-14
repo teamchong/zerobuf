@@ -198,6 +198,46 @@ int main() {
 }
 ```
 
+## Schema Mode (Simplest)
+
+Schema objects are flat value slots — no handles, no keys. You only need `zerobuf_read_*` / `zerobuf_write_*` with the field offset.
+
+```
+Schema: { x: f64, y: f64, label: string }
+Layout:  [field 0: 16 bytes] [field 1: 16 bytes] [field 2: 16 bytes]
+Offset:  base + 0            base + 16           base + 32
+```
+
+### Go
+
+```go
+base := uint32(0) // pointer from JS: Point.create(arena, {...}).__zerobuf_ptr
+
+x := C.zerobuf_read_f64(memPtr, C.uint32_t(base + 0))
+y := C.zerobuf_read_f64(memPtr, C.uint32_t(base + 16))
+C.zerobuf_write_f64(memPtr, C.uint32_t(base + 0), C.double(99.0))
+```
+
+### Rust
+
+```rust
+unsafe {
+    let x = zerobuf_read_f64(mem.as_ptr(), base + 0);
+    let y = zerobuf_read_f64(mem.as_ptr(), base + 16);
+    zerobuf_write_f64(mem.as_mut_ptr(), base + 0, 99.0);
+}
+```
+
+### C
+
+```c
+double x = zerobuf_read_f64(mem, base + 0);
+double y = zerobuf_read_f64(mem, base + 16);
+zerobuf_write_f64(mem, base + 0, 99.0);
+```
+
+No key strings, no `mem_len`, no handle pointers. Just `base + field_index * 16`.
+
 ## Key Points
 
 **No allocator in C ABI.** The C exports only read/write existing structures in memory. Allocation (creating new objects, growing arrays) is handled by the JS side or by using the Zig API directly. The C ABI is for reading results that JS/Zig created, and writing values back.

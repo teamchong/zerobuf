@@ -10,6 +10,12 @@ zerobuf defines a binary layout (tagged values, strings, arrays, objects) over `
 
 Works in any JS runtime — browser, Worker, Node, Deno, Bun. Use standalone or share memory with WASM modules (Zig, Rust, C, etc.).
 
+## Install
+
+```bash
+npm install zerobuf
+```
+
 ## Usage
 
 ```typescript
@@ -116,16 +122,6 @@ Run Zig tests: `cd zig && zig build test`
 - Doubling growth strategy: O(log n) grows
 - Max 65535 pages (~4GB). Configurable: `{ maxPages: 2048 }` for 128MB cap
 - Handle indirection: arrays/objects survive realloc
-
-## Status
-
-- [x] JS library (dynamic objects, arrays, all types)
-- [x] Zig library (read/write, C ABI exports)
-- [x] Vitest tests (60 passing)
-- [x] Benchmarks (CI posts to GITHUB_STEP_SUMMARY)
-- [x] Arena save/restore (per-request cleanup in long-lived processes)
-- [x] Schema mode (fixed-offset, no Proxy, 1.8x faster create)
-- [ ] npm publish
 
 ## License
 

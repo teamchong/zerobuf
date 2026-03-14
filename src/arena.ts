@@ -24,6 +24,7 @@ export interface ArenaOptions {
 export class Arena {
   private _memory: WebAssembly.Memory;
   private _offset: number;
+  private _startOffset: number;
   private _maxPages: number;
   private _view: DataView | null = null;
   private _currentBuffer: ArrayBuffer | null = null;
@@ -31,6 +32,7 @@ export class Arena {
   constructor(memory: WebAssembly.Memory, startOffset = 0, options?: ArenaOptions) {
     this._memory = memory;
     this._offset = startOffset;
+    this._startOffset = startOffset;
     this._maxPages = options?.maxPages ?? MAX_PAGES;
   }
 
@@ -74,6 +76,11 @@ export class Arena {
       );
     }
     this._offset = checkpoint;
+  }
+
+  /** Reset the arena to the start offset. All allocations are abandoned. Memory is not freed or shrunk. */
+  reset(): void {
+    this._offset = this._startOffset;
   }
 
   /** Allocate `bytes` with given alignment. Returns byte offset in memory. */

@@ -7,6 +7,15 @@ export { Tag, VALUE_SLOT, STRING_HEADER, ARRAY_HEADER, OBJECT_HEADER, OBJECT_ENT
 export { writeValue, allocString, allocBytes, allocArray, allocObject } from "./encode.js";
 export { readValue, readValueEager, readString, readBytes, createObjectProxy, createArrayProxy, toJSObject, toJSArray } from "./decode.js";
 export { defineSchema, type Schema } from "./schema.js";
+export {
+  writeStringSlot, readStringSlot,
+  writeBytesSlot, readBytesSlot,
+  writeI32Slot, readI32Slot,
+  writeF64Slot, readF64Slot,
+  writeBoolSlot, readBoolSlot,
+  writeNullSlot, isNullSlot,
+  readTag,
+} from "./slots.js";
 
 export interface ZeroBuf {
   /** The arena allocator managing WASM memory */
@@ -50,6 +59,12 @@ export interface ZeroBuf {
    * freed memory will read garbage — do not use them after restore.
    */
   restore(checkpoint: number): void;
+
+  /**
+   * Reset the arena to empty. All allocations are abandoned.
+   * Memory is not freed or shrunk — use this instead of creating a new instance.
+   */
+  reset(): void;
 }
 
 /**
@@ -91,6 +106,10 @@ export function zerobuf(memory: WebAssembly.Memory, startOffset = 0, options?: A
 
     restore(checkpoint: number): void {
       arena.restore(checkpoint);
+    },
+
+    reset(): void {
+      arena.reset();
     },
   };
 }

@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { zerobuf, defineSchema } from "./index.js";
+import { zerobuf, defineSchema, Arena, VALUE_SLOT } from "./index.js";
+import {
+  writeStringSlot, readStringSlot,
+  writeI32Slot, readI32Slot,
+  writeF64Slot, readF64Slot,
+  writeBoolSlot, readBoolSlot,
+  writeNullSlot, isNullSlot,
+  writeBytesSlot, readBytesSlot,
+  readTag, Tag,
+} from "./slots.js";
 
 function mem(pages = 1): WebAssembly.Memory {
   return new WebAssembly.Memory({ initial: pages });
@@ -661,6 +670,100 @@ describe("zerobuf", () => {
       expect(desc).toBeDefined();
       expect(typeof desc!.get).toBe("function");
       expect(typeof desc!.set).toBe("function");
+    });
+  });
+
+  describe("reset", () => {
+    it("resets arena to start offset", () => {
+      const buf = zerobuf(mem());
+      buf.create({ a: 1, b: "hello" });
+      expect(buf.arena.offset).toBeGreaterThan(0);
+      buf.reset();
+      expect(buf.arena.offset).toBe(0);
+    });
+
+    it("respects startOffset", () => {
+      const memory = mem();
+      const arena = new Arena(memory, 128);
+      arena.alloc(64);
+      expect(arena.offset).toBeGreaterThan(128);
+      arena.reset();
+      expect(arena.offset).toBe(128);
+    });
+  });
+
+  describe("slots", () => {
+    it("writes and reads i32 slot", () => {
+      const ab = new ArrayBuffer(64);
+      const dv = new DataView(ab);
+      writeI32Slot(dv, 0, 42);
+      expect(readI32Slot(dv, 0)).toBe(42);
+      expect(readTag(dv, 0)).toBe(Tag.I32);
+    });
+
+    it("writes and reads f64 slot", () => {
+      const ab = new ArrayBuffer(64);
+      const dv = new DataView(ab);
+      writeF64Slot(dv, 0, 3.14);
+      expect(readF64Slot(dv, 0)).toBeCloseTo(3.14);
+      expect(readTag(dv, 0)).toBe(Tag.F64);
+    });
+
+    it("writes and reads bool slot", () => {
+      const ab = new ArrayBuffer(64);
+      const dv = new DataView(ab);
+      writeBoolSlot(dv, 0, true);
+      expect(readBoolSlot(dv, 0)).toBe(true);
+      writeBoolSlot(dv, 0, false);
+      expect(readBoolSlot(dv, 0)).toBe(false);
+    });
+
+    it("writes and reads null slot", () => {
+      const ab = new ArrayBuffer(64);
+      const dv = new DataView(ab);
+      writeNullSlot(dv, 0);
+      expect(isNullSlot(dv, 0)).toBe(true);
+      writeI32Slot(dv, 0, 1);
+      expect(isNullSlot(dv, 0)).toBe(false);
+    });
+
+    it("writes and reads string slot", () => {
+      const ab = new ArrayBuffer(256);
+      const dv = new DataView(ab);
+      const u8 = new Uint8Array(ab);
+      const bytes = new TextEncoder().encode("hello");
+      const nextOffset = writeStringSlot(dv, u8, 0, VALUE_SLOT, bytes);
+      expect(readStringSlot(dv, u8, 0)).toBe("hello");
+      expect(nextOffset).toBeGreaterThan(VALUE_SLOT);
+      // aligned to 4
+      expect(nextOffset % 4).toBe(0);
+    });
+
+    it("writes and reads bytes slot", () => {
+      const ab = new ArrayBuffer(256);
+      const dv = new DataView(ab);
+      const u8 = new Uint8Array(ab);
+      const data = new Uint8Array([1, 2, 3, 4, 5]);
+      writeBytesSlot(dv, u8, 0, VALUE_SLOT, data);
+      const read = readBytesSlot(dv, u8, 0);
+      expect([...read]).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it("multi-slot request pattern (like gomode/pymode)", () => {
+      const ab = new ArrayBuffer(512);
+      const dv = new DataView(ab);
+      const u8 = new Uint8Array(ab);
+      const enc = new TextEncoder();
+
+      // Slot 0: method, Slot 1: path, Slot 2: status
+      let dataOffset = 3 * VALUE_SLOT;
+      dataOffset = writeStringSlot(dv, u8, 0 * VALUE_SLOT, dataOffset, enc.encode("GET"));
+      dataOffset = writeStringSlot(dv, u8, 1 * VALUE_SLOT, dataOffset, enc.encode("/api/test"));
+      writeI32Slot(dv, 2 * VALUE_SLOT, 200);
+
+      expect(readStringSlot(dv, u8, 0 * VALUE_SLOT)).toBe("GET");
+      expect(readStringSlot(dv, u8, 1 * VALUE_SLOT)).toBe("/api/test");
+      expect(readI32Slot(dv, 2 * VALUE_SLOT)).toBe(200);
     });
   });
 

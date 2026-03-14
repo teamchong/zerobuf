@@ -31,6 +31,9 @@ export class FragmentDO extends DurableObject<Env> {
   async scan(request: ScanRequest): Promise<ScanResult> {
     await this.ensureInitialized();
 
+    // Save arena state before per-request allocations
+    const checkpoint = this.buf.save();
+
     // WASM computes, writes result at a known pointer
     this.wasmExports.executeScan(request.ptr);
     const resultPtr = this.wasmExports.getResultPtr();
@@ -40,7 +43,12 @@ export class FragmentDO extends DurableObject<Env> {
 
     // Convert to plain JS before returning over RPC
     // (RPC serializes, so we need a plain JS object)
-    return result.toJS() as ScanResult;
+    const response = result.toJS() as ScanResult;
+
+    // Restore arena — frees all per-request allocations
+    this.buf.restore(checkpoint);
+
+    return response;
   }
 }
 ```
@@ -51,7 +59,7 @@ export class FragmentDO extends DurableObject<Env> {
 
 **toJS before RPC.** zerobuf Proxy objects reference WASM memory via absolute pointers. When you return data over DO RPC, call `.toJS()` to convert into a plain JS object that can be serialized.
 
-**Arena lifecycle.** WASM memory persists as long as the DO is alive (until hibernation evicts it). Use `arena.save()`/`arena.restore()` (planned) for per-request cleanup without resetting the entire heap.
+**Arena lifecycle.** WASM memory persists as long as the DO is alive (until hibernation evicts it). Use `buf.save()`/`buf.restore()` for per-request cleanup — save before each request, extract results with `.toJS()`, then restore to free all per-request allocations. Without this, the arena leaks memory on every request.
 
 **No race conditions.** JS and WASM on the same DO never run concurrently — each RPC call runs to completion before the next one starts.
 

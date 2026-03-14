@@ -61,6 +61,21 @@ export class Arena {
     return this._maxPages * PAGE_SIZE - this._offset;
   }
 
+  /** Save the current allocation offset. Returns a checkpoint to pass to restore(). */
+  save(): number {
+    return this._offset;
+  }
+
+  /** Restore the allocation offset to a previous checkpoint. All allocations after the checkpoint are abandoned. */
+  restore(checkpoint: number): void {
+    if (checkpoint > this._offset) {
+      throw new RangeError(
+        `zerobuf: restore checkpoint ${checkpoint} is beyond current offset ${this._offset}`,
+      );
+    }
+    this._offset = checkpoint;
+  }
+
   /** Allocate `bytes` with given alignment. Returns byte offset in memory. */
   alloc(bytes: number, align = 4): number {
     // Align up

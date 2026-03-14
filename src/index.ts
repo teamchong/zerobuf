@@ -36,6 +36,19 @@ export interface ZeroBuf {
    * Read a raw tagged value at a byte offset.
    */
   read(offset: number): unknown;
+
+  /**
+   * Save the current arena offset. Returns a checkpoint number.
+   * Call restore() with this value to free all allocations made after the save.
+   */
+  save(): number;
+
+  /**
+   * Restore the arena to a previous checkpoint. All allocations made
+   * after the checkpoint are abandoned. Accessor objects pointing to
+   * freed memory will read garbage — do not use them after restore.
+   */
+  restore(checkpoint: number): void;
 }
 
 /**
@@ -69,6 +82,14 @@ export function zerobuf(memory: WebAssembly.Memory, startOffset = 0, options?: A
 
     read(offset: number): unknown {
       return readValue(arena, offset);
+    },
+
+    save(): number {
+      return arena.save();
+    },
+
+    restore(checkpoint: number): void {
+      arena.restore(checkpoint);
     },
   };
 }

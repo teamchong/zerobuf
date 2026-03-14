@@ -1,8 +1,14 @@
 # zerobuf
 
-Structured binary layout over `WebAssembly.Memory`. Works in any JS runtime — browser, Worker, Node, Deno, Bun. Use standalone or share memory with WASM modules (Zig, Rust, C, etc.).
+## Problem
 
-Used internally by [querymode](https://github.com/teamchong/querymode), [gitmode](https://github.com/teamchong/gitmode), [drawmode](https://github.com/teamchong/drawmode), and other *mode repos. Not published to npm yet.
+Passing data between JS and WASM requires serialization — `JSON.stringify`, protobuf, or manual `DataView` reads. Every call copies bytes across the boundary. For hot paths (query engines, real-time graphics, audio processing), this serialization overhead dominates.
+
+## Solution
+
+zerobuf defines a binary layout (tagged values, strings, arrays, objects) over `WebAssembly.Memory` and gives you JS accessor objects that read/write directly — no serialization, no copies. Both JS and WASM see the same bytes.
+
+Works in any JS runtime — browser, Worker, Node, Deno, Bun. Use standalone or share memory with WASM modules (Zig, Rust, C, etc.).
 
 ## Usage
 
@@ -36,6 +42,8 @@ buf.wrapObject(ptr)      // wrap existing WASM pointer as accessor
 buf.wrapArray(ptr)       // wrap existing WASM array pointer
 buf.read(offset)         // read raw tagged value at byte offset
 buf.arena                // underlying Arena allocator
+buf.save()               // save arena checkpoint (returns number)
+buf.restore(checkpoint)  // restore to checkpoint, frees all allocations after it
 
 obj.toJS()               // convert to plain JS object (recursive)
 arr.toJS()               // convert to plain JS array (recursive)
@@ -93,7 +101,8 @@ Run Zig tests: `cd zig && zig build test`
 
 ## Memory
 
-- Arena bump allocator, append-only (no free)
+- Arena bump allocator with save/restore checkpoints
+- `buf.save()` before a request, `buf.restore()` after — frees all per-request allocations
 - Doubling growth strategy: O(log n) grows
 - Max 65535 pages (~4GB). Configurable: `{ maxPages: 2048 }` for 128MB cap
 - Handle indirection: arrays/objects survive realloc
@@ -102,10 +111,10 @@ Run Zig tests: `cd zig && zig build test`
 
 - [x] JS library (dynamic objects, arrays, all types)
 - [x] Zig library (read/write, C ABI exports)
-- [x] Vitest tests (56 passing)
+- [x] Vitest tests (60 passing)
 - [x] Benchmarks (CI posts to GITHUB_STEP_SUMMARY)
+- [x] Arena save/restore (per-request cleanup in long-lived processes)
 - [ ] Schema mode (fixed-offset access, no proxy overhead)
-- [ ] Arena save/restore
 - [ ] npm publish
 
 ## License

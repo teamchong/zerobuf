@@ -508,6 +508,62 @@ describe("zerobuf", () => {
     });
   });
 
+  describe("save / restore", () => {
+    it("restore reclaims memory", () => {
+      const buf = zerobuf(mem());
+      const checkpoint = buf.save();
+
+      buf.create({ temp: "request data", count: 42 });
+      expect(buf.arena.offset).toBeGreaterThan(checkpoint);
+
+      buf.restore(checkpoint);
+      expect(buf.arena.offset).toBe(checkpoint);
+    });
+
+    it("per-request pattern: allocations between save/restore are freed", () => {
+      const buf = zerobuf(mem());
+
+      // Persistent data allocated before the loop
+      const config = buf.create({ maxRetries: 3 });
+
+      for (let i = 0; i < 100; i++) {
+        const cp = buf.save();
+        // Per-request allocation
+        const req = buf.create({ query: `request-${i}`, ts: Date.now() });
+        const result = (req as any).toJS(); // extract before restore
+        buf.restore(cp);
+        expect(result.query).toBe(`request-${i}`);
+      }
+
+      // Persistent data still readable
+      expect(config.maxRetries).toBe(3);
+
+      // Arena didn't grow unboundedly — offset is near the config allocation
+      // (not 100x request allocations)
+      expect(buf.arena.offset).toBeLessThan(500);
+    });
+
+    it("restore with invalid checkpoint throws", () => {
+      const buf = zerobuf(mem());
+      buf.create({ x: 1 });
+      expect(() => buf.restore(buf.arena.offset + 100)).toThrow(/beyond current offset/);
+    });
+
+    it("nested save/restore", () => {
+      const buf = zerobuf(mem());
+      const cp1 = buf.save();
+      buf.create({ a: 1 });
+      const cp2 = buf.save();
+      buf.create({ b: 2 });
+
+      buf.restore(cp2); // free b
+      expect(buf.arena.offset).toBe(cp2);
+
+      buf.restore(cp1); // free a too
+      expect(buf.arena.offset).toBe(cp1);
+    });
+  });
+
   describe("memory growth", () => {
     it("survives WASM memory growth", () => {
       const memory = mem(1); // 64KB
